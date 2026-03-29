@@ -81,32 +81,39 @@ class RingBuffer1D:
         self.full = False
 
     def append(self, x: np.ndarray) -> None:
-        x = np.asarray(x)
+        x = np.asarray(x, dtype=self.buf.dtype)
         if x.size == 0:
             return
-        # If x is bigger than buffer, keep only the tail.
         if x.size >= self.size:
-            x = x[-self.size :]
+            self.buf[:] = x[-self.size :]
+            self.idx = 0
+            self.full = True
+            return
 
-        n = x.size
-        end = self.idx + n
-        if end <= self.size:
-            self.buf[self.idx:end] = x
-        else:
-            first = self.size - self.idx
-            self.buf[self.idx:] = x[:first]
-            self.buf[: end % self.size] = x[first:]
-
-        self.idx = end % self.size
-        if n > 0:
-            self.full = self.full or (n == self.size)
+        pos = 0
+        n = int(x.size)
+        while pos < n:
+            space = self.size - self.idx
+            take = min(n - pos, space)
+            self.buf[self.idx : self.idx + take] = x[pos : pos + take]
+            self.idx += take
+            pos += take
+            if self.idx == self.size:
+                self.idx = 0
+                self.full = True
 
     def ordered(self) -> np.ndarray:
-        if not self.full and self.idx == 0:
-            return self.buf.copy()
-        if not self.full:
-            return np.concatenate([self.buf[: self.idx], self.buf[self.idx :]])
-        return np.concatenate([self.buf[self.idx :], self.buf[: self.idx]])
+        """
+        Return `size` samples in time order (oldest -> newest), newest on the right.
+        While filling, left-pad with zeros so plot length stays fixed.
+        """
+        out = np.zeros((self.size,), dtype=self.buf.dtype)
+        if self.full:
+            out[:] = np.concatenate([self.buf[self.idx :], self.buf[: self.idx]])
+            return out
+        if self.idx > 0:
+            out[self.size - self.idx : self.size] = self.buf[: self.idx]
+        return out
 
 
 class RingBuffer2DCols:
@@ -128,11 +135,14 @@ class RingBuffer2DCols:
             self.full = True
 
     def ordered(self) -> np.ndarray:
-        if not self.full and self.idx == 0:
-            return self.buf.copy()
-        if not self.full:
-            return np.concatenate([self.buf[:, : self.idx], self.buf[:, self.idx :]], axis=1)
-        return np.concatenate([self.buf[:, self.idx :], self.buf[:, : self.idx]], axis=1)
+        """Time order left->right; pad empty past time slots with zeros."""
+        out = np.zeros((self.n_rows, self.n_cols), dtype=self.buf.dtype)
+        if self.full:
+            out[:, :] = np.concatenate([self.buf[:, self.idx :], self.buf[:, : self.idx]], axis=1)
+            return out
+        if self.idx > 0:
+            out[:, self.n_cols - self.idx : self.n_cols] = self.buf[:, : self.idx]
+        return out
 
 
 class AudioDsp:
