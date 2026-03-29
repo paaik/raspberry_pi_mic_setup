@@ -42,19 +42,22 @@
         opacity: 0.9;
       }
       #wavePlot,
-      #melPlot,
-      #spectrumPlot,
-      #scopePlot {
+      #melPlot {
         width: 100%;
         height: 340px;
       }
       #melPlot {
         height: 420px;
       }
-      #spectrumPlot {
+      /* Canvas VLC views: real pixel drawing (Plotly was unreliable here on some Pis). */
+      .vlc-canvas {
+        display: block;
+        width: 100%;
         height: 260px;
+        border-radius: 6px;
+        background: #0a0d0a;
       }
-      #scopePlot {
+      #scopeCanvas {
         height: 280px;
       }
       .wave-controls {
@@ -86,41 +89,38 @@
           <div class="small">Level (dBFS)</div>
           <div id="dbValue">-</div>
         </div>
-        <div id="status" class="small" style="margin-top: 8px;">Connecting...</div>
+        <div id="status" class="small" style="margin-top: 8px">Connecting...</div>
       </div>
 
       <div class="card">
-        <div class="small" style="margin-bottom: 8px;">Waveform</div>
+        <div class="small" style="margin-bottom: 8px">Waveform</div>
         <div class="wave-controls">
           <label for="waveGain">Display gain</label>
           <input type="range" id="waveGain" min="1" max="500" step="1" value="80" />
           <span id="waveGainValue" class="small">×80</span>
-          <span class="small" style="opacity: 0.75;">(plot only; dB &amp; mel unchanged)</span>
+          <span class="small" style="opacity: 0.75">(plot only; dB &amp; mel unchanged)</span>
         </div>
         <div id="wavePlot"></div>
       </div>
 
       <div class="card">
-        <div class="small" style="margin-bottom: 8px;">Scope (VLC-style)</div>
-        <div class="small" style="opacity: 0.75; margin-bottom: 8px;">
-          Oscilloscope look: neon trace on a dark grid. Uses the same decimated samples as the waveform
-          but <strong>without</strong> the display-gain slider (raw amplitude).
+        <div class="small" style="margin-bottom: 8px">Scope (VLC-style)</div>
+        <div class="small" style="opacity: 0.75; margin-bottom: 8px">
+          Canvas oscilloscope (raw amplitude, no gain slider). If this is empty, check the browser console.
         </div>
-        <div id="scopePlot"></div>
+        <canvas id="scopeCanvas" class="vlc-canvas" width="800" height="280"></canvas>
       </div>
 
       <div class="card">
-        <div class="small" style="margin-bottom: 8px;">
-          Spectrum analyzer (VLC-style)
+        <div class="small" style="margin-bottom: 8px">Spectrum analyzer (VLC-style)</div>
+        <div class="small" style="opacity: 0.75; margin-bottom: 8px">
+          Canvas bars from the latest mel column (green → yellow → red).
         </div>
-        <div class="small" style="opacity: 0.75; margin-bottom: 8px;">
-          Vertical bars from the latest mel frame — green → yellow → red by level (like VLC’s analyzer).
-        </div>
-        <div id="spectrumPlot"></div>
+        <canvas id="spectrumCanvas" class="vlc-canvas" width="800" height="260"></canvas>
       </div>
 
       <div class="card">
-        <div class="small" style="margin-bottom: 8px;">Mel Spectrogram (dB)</div>
+        <div class="small" style="margin-bottom: 8px">Mel Spectrogram (dB)</div>
         <div id="melPlot"></div>
       </div>
     </div>
@@ -128,4 +128,3 @@
     <script src="/static/app.js"></script>
   </body>
 </html>
-

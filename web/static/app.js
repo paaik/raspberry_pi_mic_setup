@@ -1,7 +1,4 @@
 let wavePlotInited = false;
-let scopePlotInited = false;
-let melPlotInited = false;
-let spectrumPlotInited = false;
 let waveTrace = null;
 let melTrace = null;
 
@@ -17,6 +14,8 @@ const dbValue = document.getElementById("dbValue");
 const statusEl = document.getElementById("status");
 const waveGainSlider = document.getElementById("waveGain");
 const waveGainValue = document.getElementById("waveGainValue");
+const scopeCanvas = document.getElementById("scopeCanvas");
+const spectrumCanvas = document.getElementById("spectrumCanvas");
 
 /** dB baseline for bar height (quieter than this is a short bar). */
 const SPECTRUM_DB_FLOOR = -90;
@@ -38,7 +37,6 @@ function scaleWave(wave) {
   return out;
 }
 
-/** Ensure we always have a plain Float64 array (JSON numbers). */
 function coerceWaveArray(wave) {
   if (!wave || !Array.isArray(wave) || wave.length === 0) {
     return [];
@@ -69,7 +67,6 @@ function waveYRangeFromData(wy) {
   return [minY - pad, maxY + pad];
 }
 
-/** Keep a minimum vertical span so a quiet trace still resembles an oscilloscope window. */
 function scopeYRangeFromData(wy) {
   if (!wy || wy.length === 0) {
     return [-0.05, 0.05];
@@ -104,8 +101,23 @@ function resizePlot(id) {
 }
 
 /**
- * Newest mel column is the rightmost column (time scrolls left → right in heatmap).
+ * Prepare canvas backing store for sharp rendering; ctx is in CSS pixel units.
  */
+function prepareCanvas(ctx, canvas) {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  const cssW = Math.max(1, rect.width);
+  const cssH = Math.max(1, rect.height);
+  const bw = Math.floor(cssW * dpr);
+  const bh = Math.floor(cssH * dpr);
+  if (canvas.width !== bw || canvas.height !== bh) {
+    canvas.width = bw;
+    canvas.height = bh;
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { cssW, cssH };
+}
+
 function latestMelColumnDb(mel) {
   if (!mel || mel.length === 0 || !mel[0] || mel[0].length === 0) {
     return [];
@@ -118,147 +130,120 @@ function latestMelColumnDb(mel) {
   return out;
 }
 
-/** Map mel bin index to rough frequency label (matches server DspConfig defaults). */
-function melBinLabels(nMels) {
-  const sr = 48000;
-  const fmax = sr / 2;
-  const labels = new Array(nMels);
-  for (let m = 0; m < nMels; m++) {
-    const fMel = (m / Math.max(1, nMels - 1)) * (2595 * Math.log10(1 + fmax / 700));
-    const hz = 700 * (Math.pow(10, fMel / 2595) - 1);
-    if (hz >= 1000) {
-      labels[m] = `${(hz / 1000).toFixed(1)}k`;
-    } else {
-      labels[m] = `${Math.round(hz)}`;
-    }
-  }
-  return labels;
-}
-
 function dbToBarHeight(db) {
   const t = (db - SPECTRUM_DB_FLOOR) / (SPECTRUM_DB_CEIL - SPECTRUM_DB_FLOOR);
   let h = 100 * Math.max(0, Math.min(1, t));
-  /* Tiny bars disappear on dark backgrounds; keep a visible floor. */
   if (h > 0 && h < 4) {
     h = 4;
   }
   return h;
 }
 
-/** VLC-style: green (quiet) → yellow → red (loud). */
 function vlcBarColors(dbVals) {
   const colors = new Array(dbVals.length);
   for (let i = 0; i < dbVals.length; i++) {
     const t = (dbVals[i] - SPECTRUM_DB_FLOOR) / (SPECTRUM_DB_CEIL - SPECTRUM_DB_FLOOR);
     const u = Math.max(0, Math.min(1, t));
     const r = Math.round(255 * Math.pow(u, 1.1));
-    const g = Math.round(200 * (1 - Math.pow(u, 1.35)) + 55);
+    const gCol = Math.round(200 * (1 - Math.pow(u, 1.35)) + 55);
     const b = Math.round(30 * (1 - u));
-    colors[i] = `rgb(${r},${g},${b})`;
+    colors[i] = `rgb(${r},${gCol},${b})`;
   }
   return colors;
 }
 
-function buildSpectrumTrace(mel) {
+function drawScopeCanvas(rawWave) {
+  if (!scopeCanvas) return;
+  const ctx = scopeCanvas.getContext("2d");
+  if (!ctx) return;
+
+  const { cssW, cssH } = prepareCanvas(ctx, scopeCanvas);
+  ctx.fillStyle = SCOPE_BG;
+  ctx.fillRect(0, 0, cssW, cssH);
+
+  const nx = 14;
+  const ny = 10;
+  ctx.strokeStyle = SCOPE_GRID;
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= nx; i++) {
+    const x = (i / nx) * cssW;
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, cssH);
+    ctx.stroke();
+  }
+  for (let j = 0; j <= ny; j++) {
+    const y = (j / ny) * cssH;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(cssW, y);
+    ctx.stroke();
+  }
+
+  const sy = coerceWaveArray(rawWave);
+  if (sy.length < 2) {
+    ctx.fillStyle = "#6ee7b7";
+    ctx.font = "12px system-ui,sans-serif";
+    ctx.fillText("No waveform samples yet", 8, 18);
+    return;
+  }
+
+  const [ymin, ymax] = scopeYRangeFromData(sy);
+  const mid = (ymin + ymax) / 2;
+  const half = Math.max((ymax - ymin) / 2, 1e-9);
+
+  ctx.strokeStyle = SCOPE_TRACE;
+  ctx.lineWidth = 2.5;
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  for (let i = 0; i < sy.length; i++) {
+    const x = (i / (sy.length - 1)) * cssW;
+    const norm = (sy[i] - mid) / half;
+    const y = cssH / 2 - norm * (cssH * 0.42);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+}
+
+function drawSpectrumCanvas(mel) {
+  if (!spectrumCanvas) return;
+  const ctx = spectrumCanvas.getContext("2d");
+  if (!ctx) return;
+
+  const { cssW, cssH } = prepareCanvas(ctx, spectrumCanvas);
+  ctx.fillStyle = "#06080c";
+  ctx.fillRect(0, 0, cssW, cssH);
+
   const dbVals = latestMelColumnDb(mel);
   const n = dbVals.length;
-  const x = toX(n);
-  const y = new Array(n);
-  for (let i = 0; i < n; i++) {
-    y[i] = dbToBarHeight(dbVals[i]);
+  if (n === 0) {
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = "12px system-ui,sans-serif";
+    ctx.fillText("No spectrum data yet", 8, 18);
+    return;
   }
+
+  const padBottom = 6;
+  const padTop = 8;
+  const plotH = Math.max(10, cssH - padBottom - padTop);
+  const gapFrac = 0.12;
+  const totalUnits = n + (n - 1) * gapFrac;
+  const unitW = cssW / totalUnits;
+
   const colors = vlcBarColors(dbVals);
-  return {
-    x,
-    y,
-    customdata: dbVals,
-    hovertemplate: "Bin %{x}<br>%{customdata:.1f} dB<extra></extra>",
-    type: "bar",
-    marker: {
-      color: colors,
-      line: { color: "rgba(255,255,255,0.06)", width: 0.5 },
-    },
-  };
-}
-
-function scopeLayout(yRange) {
-  return {
-    paper_bgcolor: "rgba(0,0,0,0)",
-    plot_bgcolor: SCOPE_BG,
-    margin: { l: 44, r: 10, t: 8, b: 32 },
-    autosize: true,
-    xaxis: {
-      title: "Time (decimated samples)",
-      tickfont: { size: 9, color: "#86efac" },
-      showgrid: true,
-      gridcolor: SCOPE_GRID,
-      zeroline: true,
-      zerolinecolor: SCOPE_GRID,
-      zerolinewidth: 1,
-      color: "#4ade80",
-    },
-    yaxis: {
-      title: "Amplitude",
-      range: yRange,
-      tickfont: { size: 9, color: "#86efac" },
-      showgrid: true,
-      gridcolor: SCOPE_GRID,
-      zeroline: true,
-      zerolinecolor: SCOPE_GRID,
-      color: "#4ade80",
-    },
-    showlegend: false,
-  };
-}
-
-function spectrumLayout(nMels) {
-  const xTickvals = [];
-  const xTicktext = [];
-  const step = Math.max(1, Math.floor(nMels / 8));
-  const labels = melBinLabels(nMels);
-  for (let i = 0; i < nMels; i += step) {
-    xTickvals.push(i);
-    xTicktext.push(labels[i]);
+  for (let i = 0; i < n; i++) {
+    const frac = dbToBarHeight(dbVals[i]) / 100;
+    const barH = frac * plotH;
+    const x = i * unitW * (1 + gapFrac);
+    const y = cssH - padBottom - barH;
+    const wBar = unitW;
+    ctx.fillStyle = colors[i];
+    ctx.fillRect(x, y, wBar * 0.98, barH);
+    ctx.strokeStyle = "rgba(255,255,255,0.06)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x, y, wBar * 0.98, barH);
   }
-  return {
-    paper_bgcolor: "rgba(0,0,0,0)",
-    plot_bgcolor: "#06080c",
-    margin: { l: 42, r: 10, t: 8, b: 36 },
-    autosize: true,
-    xaxis: {
-      title: "Frequency (approx.)",
-      tickfont: { size: 9, color: "#94a3b8" },
-      tickvals: xTickvals,
-      ticktext: xTicktext,
-      showgrid: false,
-      zeroline: false,
-      color: "#64748b",
-    },
-    yaxis: {
-      title: "Level (arb.)",
-      range: [0, 108],
-      tickfont: { size: 10, color: "#94a3b8" },
-      showgrid: true,
-      gridcolor: "rgba(148,163,184,0.18)",
-      zeroline: false,
-      color: "#64748b",
-    },
-    showlegend: false,
-    bargap: 0.08,
-  };
-}
-
-function buildScopeTrace(rawWave) {
-  const sy = coerceWaveArray(rawWave);
-  const scopeX = toX(sy.length);
-  return {
-    x: scopeX,
-    y: sy,
-    type: "scatter",
-    mode: "lines",
-    line: { color: SCOPE_TRACE, width: 2.5, shape: "linear" },
-    hoverinfo: "skip",
-  };
 }
 
 function initPlots(first) {
@@ -292,17 +277,6 @@ function initPlots(first) {
     },
     { responsive: true }
   );
-  wavePlotInited = true;
-
-  const sy = coerceWaveArray(first.wave);
-  const scopeR0 = scopeYRangeFromData(sy);
-  Plotly.newPlot(
-    "scopePlot",
-    [buildScopeTrace(sy)],
-    scopeLayout(scopeR0),
-    { responsive: true }
-  );
-  scopePlotInited = true;
 
   const melRows = mel.length;
   const melCols = mel[0].length;
@@ -329,29 +303,27 @@ function initPlots(first) {
     },
     { responsive: true }
   );
-  melPlotInited = true;
 
-  const nMels = mel.length;
-  Plotly.newPlot(
-    "spectrumPlot",
-    [buildSpectrumTrace(mel)],
-    spectrumLayout(nMels),
-    { responsive: true }
-  );
-  spectrumPlotInited = true;
+  drawScopeCanvas(first.wave);
+  drawSpectrumCanvas(mel);
+
+  wavePlotInited = true;
 
   requestAnimationFrame(() => {
     resizePlot("wavePlot");
-    resizePlot("scopePlot");
-    resizePlot("spectrumPlot");
     resizePlot("melPlot");
+    if (lastMsg) {
+      drawScopeCanvas(lastMsg.wave);
+      drawSpectrumCanvas(lastMsg.mel);
+    }
   });
 }
 
 function updatePlots(msg) {
   lastMsg = msg;
   dbValue.textContent = `${Number(msg.db).toFixed(1)} dBFS`;
-  if (!wavePlotInited || !scopePlotInited || !melPlotInited || !spectrumPlotInited) {
+
+  if (!wavePlotInited) {
     initPlots(msg);
     statusEl.textContent = "Live";
     return;
@@ -362,15 +334,10 @@ function updatePlots(msg) {
   Plotly.restyle("wavePlot", { x: [toX(wy.length)], y: [wy] });
   Plotly.relayout("wavePlot", { "yaxis.range": yRange, "yaxis.title.text": "Amplitude × gain" });
 
-  const raw = coerceWaveArray(msg.wave);
-  const scopeRng = scopeYRangeFromData(raw);
-  /* Plotly.restyle often fails silently for some trace types; react is reliable. */
-  Plotly.react("scopePlot", [buildScopeTrace(raw)], scopeLayout(scopeRng));
-
   Plotly.restyle("melPlot", { z: [msg.mel] });
 
-  const nMels = msg.mel.length;
-  Plotly.react("spectrumPlot", [buildSpectrumTrace(msg.mel)], spectrumLayout(nMels));
+  drawScopeCanvas(msg.wave);
+  drawSpectrumCanvas(msg.mel);
 }
 
 function wsUrl() {
@@ -378,7 +345,6 @@ function wsUrl() {
   return `${scheme}://${window.location.host}/ws`;
 }
 
-/** When gain changes, replot waveform from last message without waiting for WS. */
 function onWaveGainInput() {
   syncGainLabel();
   if (!lastMsg || !wavePlotInited) return;
@@ -390,6 +356,18 @@ function onWaveGainInput() {
 
 waveGainSlider.addEventListener("input", onWaveGainInput);
 syncGainLabel();
+
+function onResize() {
+  if (!lastMsg) return;
+  drawScopeCanvas(lastMsg.wave);
+  drawSpectrumCanvas(lastMsg.mel);
+}
+
+let resizeT = null;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeT);
+  resizeT = setTimeout(onResize, 120);
+});
 
 function start() {
   const ws = new WebSocket(wsUrl());
