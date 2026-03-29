@@ -49,6 +49,25 @@
       #melPlot {
         height: 420px;
       }
+      .wave-controls {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-bottom: 10px;
+      }
+      .wave-controls label {
+        font-size: 13px;
+        opacity: 0.95;
+      }
+      #waveGain {
+        width: min(280px, 100%);
+        accent-color: #38bdf8;
+      }
+      #waveGainValue {
+        font-variant-numeric: tabular-nums;
+        min-width: 3.5rem;
+      }
     </style>
     <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
   </head>
@@ -64,6 +83,12 @@
 
       <div class="card">
         <div class="small" style="margin-bottom: 8px;">Waveform</div>
+        <div class="wave-controls">
+          <label for="waveGain">Display gain</label>
+          <input type="range" id="waveGain" min="1" max="500" step="1" value="80" />
+          <span id="waveGainValue" class="small">×80</span>
+          <span class="small" style="opacity: 0.75;">(plot only; dB &amp; mel unchanged)</span>
+        </div>
         <div id="wavePlot"></div>
       </div>
 
