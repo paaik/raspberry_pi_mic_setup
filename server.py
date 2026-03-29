@@ -110,7 +110,10 @@ def build_app(pipeline: AudioPipeline) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> Any:
-        return templates.TemplateResponse("index.html", {"request": request})
+        # Starlette 0.28+ expects (request=..., name=..., context=...).
+        # Old pattern TemplateResponse("x.html", {"request": request}) passes a dict as the
+        # template name and triggers Jinja2: TypeError: unhashable type: 'dict'.
+        return templates.TemplateResponse(request=request, name="index.html", context={})
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
