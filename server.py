@@ -77,7 +77,8 @@ class AudioPipeline:
             with self._lock:
                 self._latest = LatestFrame(
                     db=float(out["db"]),
-                    wave=np.asarray(out["wave"], dtype=np.float32).round(5).tolist(),
+                    # Extra decimals: small I2S levels were rounding to 0 and flattening the waveform/scope.
+                    wave=np.asarray(out["wave"], dtype=np.float32).round(8).tolist(),
                     mel=np.asarray(out["mel"], dtype=np.float32).round(2).tolist(),
                 )
 

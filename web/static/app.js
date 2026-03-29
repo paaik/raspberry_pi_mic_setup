@@ -3,13 +3,11 @@ let scopePlotInited = false;
 let melPlotInited = false;
 let spectrumPlotInited = false;
 let waveTrace = null;
-let scopeTrace = null;
 let melTrace = null;
-let spectrumTrace = null;
 
 /** VLC “scope” CRT styling */
 const SCOPE_TRACE = "#39ff14";
-const SCOPE_GRID = "rgba(57,255,20,0.18)";
+const SCOPE_GRID = "rgba(57,255,20,0.22)";
 const SCOPE_BG = "#0a0d0a";
 
 /** Last payload from server; used to re-apply gain when the slider moves. */
@@ -31,15 +29,31 @@ function getWaveGain() {
 }
 
 function scaleWave(wave) {
+  const w = coerceWaveArray(wave);
   const g = getWaveGain();
+  const out = new Array(w.length);
+  for (let i = 0; i < w.length; i++) {
+    out[i] = w[i] * g;
+  }
+  return out;
+}
+
+/** Ensure we always have a plain Float64 array (JSON numbers). */
+function coerceWaveArray(wave) {
+  if (!wave || !Array.isArray(wave) || wave.length === 0) {
+    return [];
+  }
   const out = new Array(wave.length);
   for (let i = 0; i < wave.length; i++) {
-    out[i] = wave[i] * g;
+    out[i] = Number(wave[i]);
   }
   return out;
 }
 
 function waveYRangeFromData(wy) {
+  if (!wy || wy.length === 0) {
+    return [-1, 1];
+  }
   let minY = Infinity;
   let maxY = -Infinity;
   for (let i = 0; i < wy.length; i++) {
@@ -57,6 +71,9 @@ function waveYRangeFromData(wy) {
 
 /** Keep a minimum vertical span so a quiet trace still resembles an oscilloscope window. */
 function scopeYRangeFromData(wy) {
+  if (!wy || wy.length === 0) {
+    return [-0.05, 0.05];
+  }
   const [lo, hi] = waveYRangeFromData(wy);
   const mid = (lo + hi) / 2;
   let half = (hi - lo) / 2;
@@ -73,6 +90,17 @@ function toX(n) {
   const arr = new Array(n);
   for (let i = 0; i < n; i++) arr[i] = i;
   return arr;
+}
+
+function resizePlot(id) {
+  const gd = document.getElementById(id);
+  if (gd && window.Plotly && typeof Plotly.Plots.resize === "function") {
+    try {
+      Plotly.Plots.resize(gd);
+    } catch (e) {
+      /* ignore */
+    }
+  }
 }
 
 /**
@@ -109,7 +137,11 @@ function melBinLabels(nMels) {
 
 function dbToBarHeight(db) {
   const t = (db - SPECTRUM_DB_FLOOR) / (SPECTRUM_DB_CEIL - SPECTRUM_DB_FLOOR);
-  const h = 100 * Math.max(0, Math.min(1, t));
+  let h = 100 * Math.max(0, Math.min(1, t));
+  /* Tiny bars disappear on dark backgrounds; keep a visible floor. */
+  if (h > 0 && h < 4) {
+    h = 4;
+  }
   return h;
 }
 
@@ -144,8 +176,88 @@ function buildSpectrumTrace(mel) {
     type: "bar",
     marker: {
       color: colors,
-      line: { width: 0 },
+      line: { color: "rgba(255,255,255,0.06)", width: 0.5 },
     },
+  };
+}
+
+function scopeLayout(yRange) {
+  return {
+    paper_bgcolor: "rgba(0,0,0,0)",
+    plot_bgcolor: SCOPE_BG,
+    margin: { l: 44, r: 10, t: 8, b: 32 },
+    autosize: true,
+    xaxis: {
+      title: "Time (decimated samples)",
+      tickfont: { size: 9, color: "#86efac" },
+      showgrid: true,
+      gridcolor: SCOPE_GRID,
+      zeroline: true,
+      zerolinecolor: SCOPE_GRID,
+      zerolinewidth: 1,
+      color: "#4ade80",
+    },
+    yaxis: {
+      title: "Amplitude",
+      range: yRange,
+      tickfont: { size: 9, color: "#86efac" },
+      showgrid: true,
+      gridcolor: SCOPE_GRID,
+      zeroline: true,
+      zerolinecolor: SCOPE_GRID,
+      color: "#4ade80",
+    },
+    showlegend: false,
+  };
+}
+
+function spectrumLayout(nMels) {
+  const xTickvals = [];
+  const xTicktext = [];
+  const step = Math.max(1, Math.floor(nMels / 8));
+  const labels = melBinLabels(nMels);
+  for (let i = 0; i < nMels; i += step) {
+    xTickvals.push(i);
+    xTicktext.push(labels[i]);
+  }
+  return {
+    paper_bgcolor: "rgba(0,0,0,0)",
+    plot_bgcolor: "#06080c",
+    margin: { l: 42, r: 10, t: 8, b: 36 },
+    autosize: true,
+    xaxis: {
+      title: "Frequency (approx.)",
+      tickfont: { size: 9, color: "#94a3b8" },
+      tickvals: xTickvals,
+      ticktext: xTicktext,
+      showgrid: false,
+      zeroline: false,
+      color: "#64748b",
+    },
+    yaxis: {
+      title: "Level (arb.)",
+      range: [0, 108],
+      tickfont: { size: 10, color: "#94a3b8" },
+      showgrid: true,
+      gridcolor: "rgba(148,163,184,0.18)",
+      zeroline: false,
+      color: "#64748b",
+    },
+    showlegend: false,
+    bargap: 0.08,
+  };
+}
+
+function buildScopeTrace(rawWave) {
+  const sy = coerceWaveArray(rawWave);
+  const scopeX = toX(sy.length);
+  return {
+    x: scopeX,
+    y: sy,
+    type: "scatter",
+    mode: "lines",
+    line: { color: SCOPE_TRACE, width: 2.5, shape: "linear" },
+    hoverinfo: "skip",
   };
 }
 
@@ -159,7 +271,7 @@ function initPlots(first) {
     x: waveX,
     y: wave,
     mode: "lines",
-    line: { width: 1.5 },
+    line: { width: 1.5, color: "#38bdf8" },
     type: "scatter",
   };
 
@@ -170,6 +282,7 @@ function initPlots(first) {
       paper_bgcolor: "rgba(0,0,0,0)",
       plot_bgcolor: "rgba(0,0,0,0)",
       margin: { l: 40, r: 10, t: 10, b: 30 },
+      autosize: true,
       xaxis: { title: "Samples (decimated)", tickfont: { size: 10 } },
       yaxis: {
         title: "Amplitude × gain",
@@ -181,47 +294,12 @@ function initPlots(first) {
   );
   wavePlotInited = true;
 
-  /* Raw samples — VLC-style scope (no display-gain slider). */
-  const scopeY = first.wave.slice();
-  const scopeX = toX(scopeY.length);
-  const scopeYRange = scopeYRangeFromData(scopeY);
-  scopeTrace = {
-    x: scopeX,
-    y: scopeY,
-    type: "scatter",
-    mode: "lines",
-    line: { color: SCOPE_TRACE, width: 2.2, shape: "linear" },
-    hoverinfo: "skip",
-  };
-
+  const sy = coerceWaveArray(first.wave);
+  const scopeR0 = scopeYRangeFromData(sy);
   Plotly.newPlot(
     "scopePlot",
-    [scopeTrace],
-    {
-      paper_bgcolor: "rgba(0,0,0,0)",
-      plot_bgcolor: SCOPE_BG,
-      margin: { l: 44, r: 10, t: 8, b: 32 },
-      xaxis: {
-        title: "Time (decimated samples)",
-        tickfont: { size: 9, color: "#86efac" },
-        showgrid: true,
-        gridcolor: SCOPE_GRID,
-        zeroline: true,
-        zerolinecolor: SCOPE_GRID,
-        zerolinewidth: 1,
-        color: "#4ade80",
-      },
-      yaxis: {
-        title: "Amplitude",
-        range: scopeYRange,
-        tickfont: { size: 9, color: "#86efac" },
-        showgrid: true,
-        gridcolor: SCOPE_GRID,
-        zeroline: true,
-        zerolinecolor: SCOPE_GRID,
-        color: "#4ade80",
-      },
-    },
+    [buildScopeTrace(sy)],
+    scopeLayout(scopeR0),
     { responsive: true }
   );
   scopePlotInited = true;
@@ -245,6 +323,7 @@ function initPlots(first) {
       paper_bgcolor: "rgba(0,0,0,0)",
       plot_bgcolor: "rgba(0,0,0,0)",
       margin: { l: 50, r: 10, t: 10, b: 35 },
+      autosize: true,
       xaxis: { title: "Time (frames)", tickfont: { size: 10 } },
       yaxis: { title: "Mel bin", tickfont: { size: 10 } },
     },
@@ -252,50 +331,21 @@ function initPlots(first) {
   );
   melPlotInited = true;
 
-  spectrumTrace = buildSpectrumTrace(mel);
   const nMels = mel.length;
-  const xTickvals = [];
-  const xTicktext = [];
-  const step = Math.max(1, Math.floor(nMels / 8));
-  const labels = melBinLabels(nMels);
-  for (let i = 0; i < nMels; i += step) {
-    xTickvals.push(i);
-    xTicktext.push(labels[i]);
-  }
-
   Plotly.newPlot(
     "spectrumPlot",
-    [spectrumTrace],
-    {
-      paper_bgcolor: "rgba(0,0,0,0)",
-      plot_bgcolor: "#06080c",
-      margin: { l: 42, r: 10, t: 8, b: 36 },
-      xaxis: {
-        title: "Frequency (approx.)",
-        tickfont: { size: 9, color: "#94a3b8" },
-        tickvals: xTickvals,
-        ticktext: xTicktext,
-        showgrid: false,
-        zeroline: false,
-        color: "#64748b",
-      },
-      yaxis: {
-        title: "Level",
-        range: [0, 108],
-        tickfont: { size: 10, color: "#94a3b8" },
-        showgrid: true,
-        gridcolor: "rgba(148,163,184,0.12)",
-        zeroline: false,
-        color: "#64748b",
-        tickvals: [0, 25, 50, 75, 100],
-        ticktext: ["", "", "", "", ""],
-      },
-      showlegend: false,
-      bargap: 0.08,
-    },
+    [buildSpectrumTrace(mel)],
+    spectrumLayout(nMels),
     { responsive: true }
   );
   spectrumPlotInited = true;
+
+  requestAnimationFrame(() => {
+    resizePlot("wavePlot");
+    resizePlot("scopePlot");
+    resizePlot("spectrumPlot");
+    resizePlot("melPlot");
+  });
 }
 
 function updatePlots(msg) {
@@ -309,22 +359,18 @@ function updatePlots(msg) {
 
   const wy = scaleWave(msg.wave);
   const yRange = waveYRangeFromData(wy);
-  Plotly.restyle("wavePlot", { y: [wy] });
+  Plotly.restyle("wavePlot", { x: [toX(wy.length)], y: [wy] });
   Plotly.relayout("wavePlot", { "yaxis.range": yRange, "yaxis.title.text": "Amplitude × gain" });
 
-  const sy = msg.wave;
-  const scopeRng = scopeYRangeFromData(sy);
-  Plotly.restyle("scopePlot", { y: [sy] });
-  Plotly.relayout("scopePlot", { "yaxis.range": scopeRng });
+  const raw = coerceWaveArray(msg.wave);
+  const scopeRng = scopeYRangeFromData(raw);
+  /* Plotly.restyle often fails silently for some trace types; react is reliable. */
+  Plotly.react("scopePlot", [buildScopeTrace(raw)], scopeLayout(scopeRng));
 
   Plotly.restyle("melPlot", { z: [msg.mel] });
 
-  const spec = buildSpectrumTrace(msg.mel);
-  Plotly.restyle("spectrumPlot", {
-    y: [spec.y],
-    customdata: [spec.customdata],
-    "marker.color": [spec.marker.color],
-  });
+  const nMels = msg.mel.length;
+  Plotly.react("spectrumPlot", [buildSpectrumTrace(msg.mel)], spectrumLayout(nMels));
 }
 
 function wsUrl() {
@@ -338,7 +384,7 @@ function onWaveGainInput() {
   if (!lastMsg || !wavePlotInited) return;
   const wy = scaleWave(lastMsg.wave);
   const yRange = waveYRangeFromData(wy);
-  Plotly.restyle("wavePlot", { y: [wy] });
+  Plotly.restyle("wavePlot", { x: [toX(wy.length)], y: [wy] });
   Plotly.relayout("wavePlot", { "yaxis.range": yRange });
 }
 
