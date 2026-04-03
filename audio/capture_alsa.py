@@ -56,12 +56,12 @@ def _list_arecord_devices() -> list[AlsaDevice]:
 
 class AlsaI2SMicCapture:
     """
-    Capture mono I2S PCM from ALSA using `arecord` subprocess.
+    Capture I2S PCM from ALSA using `arecord` subprocess.
 
-    For DMM-4026-B-I2S-R, we typically use:
+    For DMM-4026-B-I2S-R (and similar MEMS I2S mics):
       - 48 kHz
       - 32-bit word containers -> S32_LE
-      - 1 channel (mono)
+      - 1 channel (mono) or 2 channels (stereo L/R interleaved)
     """
 
     def __init__(
@@ -126,27 +126,45 @@ class AlsaI2SMicCapture:
 
     def read_block(self) -> np.ndarray:
         """
-        Returns int32 samples with shape (frames,).
+        Returns int32 samples:
+          - mono: shape (frames,)
+          - stereo: shape (frames, 2) with columns [left, right] (interleaved L,R from ALSA)
         """
         if self._proc is None or self._proc.stdout is None:
-            # If not started, return silence.
-            return np.zeros((self.block_frames,), dtype=np.int32)
+            return (
+                np.zeros((self.block_frames, self.channels), dtype=np.int32)
+                if self.channels > 1
+                else np.zeros((self.block_frames,), dtype=np.int32)
+            )
 
         if self._stop_event.is_set():
-            return np.zeros((self.block_frames,), dtype=np.int32)
+            return (
+                np.zeros((self.block_frames, self.channels), dtype=np.int32)
+                if self.channels > 1
+                else np.zeros((self.block_frames,), dtype=np.int32)
+            )
 
         raw = self._proc.stdout.read(self._bytes_per_block)
         if raw is None or len(raw) != self._bytes_per_block:
-            # On underrun/termination, avoid crashing.
-            return np.zeros((self.block_frames,), dtype=np.int32)
+            return (
+                np.zeros((self.block_frames, self.channels), dtype=np.int32)
+                if self.channels > 1
+                else np.zeros((self.block_frames,), dtype=np.int32)
+            )
 
-        # int32 little-endian
         data = np.frombuffer(raw, dtype="<i4")
-        if data.shape[0] != self.block_frames * self.channels:
-            data = data[: self.block_frames * self.channels]
+        need = self.block_frames * self.channels
+        if data.shape[0] < need:
+            return (
+                np.zeros((self.block_frames, self.channels), dtype=np.int32)
+                if self.channels > 1
+                else np.zeros((self.block_frames,), dtype=np.int32)
+            )
+        data = data[:need]
 
-        if self.channels > 1:
-            data = data.reshape(-1, self.channels)[:, 0]
+        if self.channels == 1:
+            return data.astype(np.int32, copy=False)
 
-        return data.astype(np.int32, copy=False)
+        # Interleaved L,R,L,R -> (frames, 2)
+        return data.reshape(self.block_frames, self.channels).astype(np.int32, copy=False)
 

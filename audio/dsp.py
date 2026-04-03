@@ -146,8 +146,9 @@ class RingBuffer2DCols:
 
 
 class AudioDsp:
-    def __init__(self, cfg: DspConfig | None = None) -> None:
+    def __init__(self, cfg: DspConfig | None = None, *, stereo: bool = False) -> None:
         self.cfg = cfg or DspConfig()
+        self._stereo = bool(stereo)
 
         self._window = np.hanning(self.cfg.n_fft).astype(np.float32)
 
@@ -166,6 +167,7 @@ class AudioDsp:
         wave_step = int((self.cfg.sample_rate * self.cfg.wave_window_sec) / self.cfg.wave_points)
         self._wave_step = max(1, wave_step)
         self._wave = RingBuffer1D(self.cfg.wave_points, dtype=np.float32)
+        self._wave_r: RingBuffer1D | None = RingBuffer1D(self.cfg.wave_points, dtype=np.float32) if self._stereo else None
 
         self._pending = np.zeros((0,), dtype=np.float32)
 
@@ -209,6 +211,53 @@ class AudioDsp:
         return {
             "db": self._latest_db,
             "wave": self._wave.ordered(),
+            "mel": self._mel.ordered(),
+        }
+
+    def process_int32_stereo(self, lr_i32: np.ndarray) -> dict:
+        """
+        Stereo interleaved as array shape (frames, 2): column 0 = left, 1 = right.
+        Mel spectrogram uses (L+R)/2 so one heatmap matches a single I2S stereo stream.
+        """
+        if lr_i32.ndim != 2 or lr_i32.shape[1] != 2:
+            raise ValueError("stereo expects shape (frames, 2)")
+
+        L = lr_i32[:, 0].astype(np.float32, copy=False) / 2147483648.0
+        R = lr_i32[:, 1].astype(np.float32, copy=False) / 2147483648.0
+        mix = (L + R) * 0.5
+
+        rms_l = float(np.sqrt(np.mean(L * L) + 1e-18))
+        rms_r = float(np.sqrt(np.mean(R * R) + 1e-18))
+        db_l = float(np.clip(20.0 * math.log10(rms_l + 1e-18), self.cfg.db_floor, self.cfg.db_ceiling))
+        db_r = float(np.clip(20.0 * math.log10(rms_r + 1e-18), self.cfg.db_floor, self.cfg.db_ceiling))
+        self._latest_db = float(np.clip(20.0 * math.log10(float(np.sqrt(np.mean(mix * mix) + 1e-18)) + 1e-18), self.cfg.db_floor, self.cfg.db_ceiling))
+
+        assert self._wave_r is not None
+        self._wave.append(L[:: self._wave_step])
+        self._wave_r.append(R[:: self._wave_step])
+
+        self._pending = np.concatenate([self._pending, mix])
+        n_fft = self.cfg.n_fft
+        hop = self.cfg.hop_length
+        while self._pending.size >= n_fft:
+            frame = self._pending[:n_fft]
+            self._pending = self._pending[hop:]
+
+            windowed = frame * self._window
+            spec = np.fft.rfft(windowed, n=n_fft)
+            power = (np.abs(spec) ** 2).astype(np.float32)
+
+            mel_power = self._mel_fb @ power
+            mel_db = 10.0 * np.log10(mel_power + 1e-12)
+            mel_db = np.clip(mel_db, self.cfg.db_floor, self.cfg.db_ceiling)
+            self._mel.append_column(mel_db.astype(np.float32))
+
+        return {
+            "db": self._latest_db,
+            "db_l": db_l,
+            "db_r": db_r,
+            "wave": self._wave.ordered(),
+            "wave_r": self._wave_r.ordered(),
             "mel": self._mel.ordered(),
         }
 

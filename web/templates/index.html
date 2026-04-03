@@ -87,13 +87,15 @@
       <div class="card">
         <div class="row">
           <div class="small">Level (dBFS)</div>
-          <div id="dbValue">-</div>
+          <div id="dbValue" style="white-space: pre-line">-</div>
         </div>
         <div id="status" class="small" style="margin-top: 8px">Connecting...</div>
       </div>
 
       <div class="card">
-        <div class="small" style="margin-bottom: 8px">Waveform</div>
+        <div class="small" style="margin-bottom: 8px">
+          Waveform <span id="waveChLabel" class="small" style="opacity: 0.75"></span>
+        </div>
         <div class="wave-controls">
           <label for="waveGain">Display gain</label>
           <input type="range" id="waveGain" min="1" max="500" step="1" value="80" />
@@ -106,7 +108,7 @@
       <div class="card">
         <div class="small" style="margin-bottom: 8px">Scope (VLC-style)</div>
         <div class="small" style="opacity: 0.75; margin-bottom: 8px">
-          Canvas oscilloscope (raw amplitude, no gain slider). If this is empty, check the browser console.
+          Canvas oscilloscope (raw amplitude, no gain slider). Stereo: L = green, R = magenta.
         </div>
         <canvas id="scopeCanvas" class="vlc-canvas" width="800" height="280"></canvas>
       </div>

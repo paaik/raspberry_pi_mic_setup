@@ -3,14 +3,18 @@ let waveTrace = null;
 let melTrace = null;
 
 /** VLC “scope” CRT styling */
-const SCOPE_TRACE = "#39ff14";
+const SCOPE_TRACE_L = "#39ff14";
+const SCOPE_TRACE_R = "#f472b6";
 const SCOPE_GRID = "rgba(57,255,20,0.22)";
 const SCOPE_BG = "#0a0d0a";
 
 /** Last payload from server; used to re-apply gain when the slider moves. */
 let lastMsg = null;
+/** Tracks mono vs stereo so we can re-init Plotly if the server mode changes. */
+let lastStereoFlag = null;
 
 const dbValue = document.getElementById("dbValue");
+const waveChLabel = document.getElementById("waveChLabel");
 const statusEl = document.getElementById("status");
 const waveGainSlider = document.getElementById("waveGain");
 const waveGainValue = document.getElementById("waveGainValue");
@@ -77,6 +81,22 @@ function scopeYRangeFromData(wy) {
   const minHalf = 0.02;
   if (half < minHalf) half = minHalf;
   return [mid - half, mid + half];
+}
+
+function scopeYRangeStereo(L, R) {
+  const combo = L.length && R.length ? L.concat(R) : L.length ? L : R;
+  return scopeYRangeFromData(combo);
+}
+
+function formatDbLine(msg) {
+  if (!msg) return "-";
+  if (msg.stereo && msg.db_l != null && msg.db_r != null) {
+    const l = Number(msg.db_l).toFixed(1);
+    const r = Number(msg.db_r).toFixed(1);
+    const m = Number(msg.db).toFixed(1);
+    return `L: ${l} dBFS  |  R: ${r} dBFS\nMix (L+R)/2: ${m} dBFS`;
+  }
+  return `${Number(msg.db).toFixed(1)} dBFS`;
 }
 
 function syncGainLabel() {
@@ -152,7 +172,25 @@ function vlcBarColors(dbVals) {
   return colors;
 }
 
-function drawScopeCanvas(rawWave) {
+function drawScopeTrace(ctx, sy, cssW, cssH, ymin, ymax, color) {
+  if (sy.length < 2) return;
+  const mid = (ymin + ymax) / 2;
+  const half = Math.max((ymax - ymin) / 2, 1e-9);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2.5;
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  for (let i = 0; i < sy.length; i++) {
+    const x = (i / (sy.length - 1)) * cssW;
+    const norm = (sy[i] - mid) / half;
+    const y = cssH / 2 - norm * (cssH * 0.42);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+}
+
+function drawScopeCanvas(msg) {
   if (!scopeCanvas) return;
   const ctx = scopeCanvas.getContext("2d");
   if (!ctx) return;
@@ -180,30 +218,31 @@ function drawScopeCanvas(rawWave) {
     ctx.stroke();
   }
 
-  const sy = coerceWaveArray(rawWave);
-  if (sy.length < 2) {
+  const stereo = msg && msg.stereo && Array.isArray(msg.wave_r);
+  const L = coerceWaveArray(msg && msg.wave);
+  const R = stereo ? coerceWaveArray(msg.wave_r) : [];
+
+  if (L.length < 2 && R.length < 2) {
     ctx.fillStyle = "#6ee7b7";
     ctx.font = "12px system-ui,sans-serif";
     ctx.fillText("No waveform samples yet", 8, 18);
     return;
   }
 
-  const [ymin, ymax] = scopeYRangeFromData(sy);
-  const mid = (ymin + ymax) / 2;
-  const half = Math.max((ymax - ymin) / 2, 1e-9);
-
-  ctx.strokeStyle = SCOPE_TRACE;
-  ctx.lineWidth = 2.5;
-  ctx.lineJoin = "round";
-  ctx.beginPath();
-  for (let i = 0; i < sy.length; i++) {
-    const x = (i / (sy.length - 1)) * cssW;
-    const norm = (sy[i] - mid) / half;
-    const y = cssH / 2 - norm * (cssH * 0.42);
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
+  let ymin;
+  let ymax;
+  if (stereo && R.length >= 2) {
+    const rng = scopeYRangeStereo(L, R);
+    ymin = rng[0];
+    ymax = rng[1];
+    drawScopeTrace(ctx, L, cssW, cssH, ymin, ymax, SCOPE_TRACE_L);
+    drawScopeTrace(ctx, R, cssW, cssH, ymin, ymax, SCOPE_TRACE_R);
+  } else {
+    const rng = scopeYRangeFromData(L);
+    ymin = rng[0];
+    ymax = rng[1];
+    drawScopeTrace(ctx, L, cssW, cssH, ymin, ymax, SCOPE_TRACE_L);
   }
-  ctx.stroke();
 }
 
 function drawSpectrumCanvas(mel) {
@@ -247,27 +286,58 @@ function drawSpectrumCanvas(mel) {
 }
 
 function initPlots(first) {
-  const wave = scaleWave(first.wave);
-  const mel = first.mel;
-  const yRange = waveYRangeFromData(wave);
+  const stereo = !!first.stereo;
+  lastStereoFlag = stereo;
+  if (waveChLabel) {
+    waveChLabel.textContent = stereo ? "— L cyan / R magenta" : "— mono";
+  }
 
-  const waveX = toX(wave.length);
-  waveTrace = {
-    x: waveX,
-    y: wave,
-    mode: "lines",
-    line: { width: 1.5, color: "#38bdf8" },
-    type: "scatter",
-  };
+  const wL = scaleWave(first.wave);
+  const wR = stereo && Array.isArray(first.wave_r) ? scaleWave(first.wave_r) : wL;
+  const yRange = stereo ? waveYRangeFromData(wL.concat(wR)) : waveYRangeFromData(wL);
+
+  const wx = toX(wL.length);
+  const traces = stereo
+    ? [
+        {
+          x: wx,
+          y: wL,
+          mode: "lines",
+          line: { width: 1.5, color: "#38bdf8" },
+          type: "scatter",
+          name: "L",
+        },
+        {
+          x: wx,
+          y: wR,
+          mode: "lines",
+          line: { width: 1.5, color: "#e879f9" },
+          type: "scatter",
+          name: "R",
+        },
+      ]
+    : [
+        {
+          x: wx,
+          y: wL,
+          mode: "lines",
+          line: { width: 1.5, color: "#38bdf8" },
+          type: "scatter",
+        },
+      ];
+
+  waveTrace = traces[0];
 
   Plotly.newPlot(
     "wavePlot",
-    [waveTrace],
+    traces,
     {
       paper_bgcolor: "rgba(0,0,0,0)",
       plot_bgcolor: "rgba(0,0,0,0)",
       margin: { l: 40, r: 10, t: 10, b: 30 },
       autosize: true,
+      showlegend: stereo,
+      legend: { font: { size: 10 }, orientation: "h", y: 1.08 },
       xaxis: { title: "Samples (decimated)", tickfont: { size: 10 } },
       yaxis: {
         title: "Amplitude × gain",
@@ -278,6 +348,7 @@ function initPlots(first) {
     { responsive: true }
   );
 
+  const mel = first.mel;
   const melRows = mel.length;
   const melCols = mel[0].length;
   const melY = toX(melRows);
@@ -304,7 +375,7 @@ function initPlots(first) {
     { responsive: true }
   );
 
-  drawScopeCanvas(first.wave);
+  drawScopeCanvas(first);
   drawSpectrumCanvas(mel);
 
   wavePlotInited = true;
@@ -313,7 +384,7 @@ function initPlots(first) {
     resizePlot("wavePlot");
     resizePlot("melPlot");
     if (lastMsg) {
-      drawScopeCanvas(lastMsg.wave);
+      drawScopeCanvas(lastMsg);
       drawSpectrumCanvas(lastMsg.mel);
     }
   });
@@ -321,7 +392,23 @@ function initPlots(first) {
 
 function updatePlots(msg) {
   lastMsg = msg;
-  dbValue.textContent = `${Number(msg.db).toFixed(1)} dBFS`;
+  if (dbValue) {
+    dbValue.textContent = formatDbLine(msg);
+  }
+
+  const stereo = !!msg.stereo;
+  if (
+    wavePlotInited &&
+    lastStereoFlag !== null &&
+    stereo !== lastStereoFlag
+  ) {
+    try {
+      Plotly.purge("wavePlot");
+    } catch (e) {
+      /* ignore */
+    }
+    wavePlotInited = false;
+  }
 
   if (!wavePlotInited) {
     initPlots(msg);
@@ -329,14 +416,28 @@ function updatePlots(msg) {
     return;
   }
 
-  const wy = scaleWave(msg.wave);
-  const yRange = waveYRangeFromData(wy);
-  Plotly.restyle("wavePlot", { x: [toX(wy.length)], y: [wy] });
+  lastStereoFlag = stereo;
+  if (waveChLabel) {
+    waveChLabel.textContent = stereo ? "— L cyan / R magenta" : "— mono";
+  }
+
+  const wL = scaleWave(msg.wave);
+  const wR = stereo && Array.isArray(msg.wave_r) ? scaleWave(msg.wave_r) : wL;
+  const yRange = stereo ? waveYRangeFromData(wL.concat(wR)) : waveYRangeFromData(wL);
+
+  if (stereo) {
+    Plotly.restyle("wavePlot", {
+      x: [toX(wL.length), toX(wL.length)],
+      y: [wL, wR],
+    });
+  } else {
+    Plotly.restyle("wavePlot", { x: [toX(wL.length)], y: [wL] });
+  }
   Plotly.relayout("wavePlot", { "yaxis.range": yRange, "yaxis.title.text": "Amplitude × gain" });
 
   Plotly.restyle("melPlot", { z: [msg.mel] });
 
-  drawScopeCanvas(msg.wave);
+  drawScopeCanvas(msg);
   drawSpectrumCanvas(msg.mel);
 }
 
@@ -348,9 +449,18 @@ function wsUrl() {
 function onWaveGainInput() {
   syncGainLabel();
   if (!lastMsg || !wavePlotInited) return;
-  const wy = scaleWave(lastMsg.wave);
-  const yRange = waveYRangeFromData(wy);
-  Plotly.restyle("wavePlot", { x: [toX(wy.length)], y: [wy] });
+  const stereo = !!lastMsg.stereo;
+  const wL = scaleWave(lastMsg.wave);
+  const wR = stereo && Array.isArray(lastMsg.wave_r) ? scaleWave(lastMsg.wave_r) : wL;
+  const yRange = stereo ? waveYRangeFromData(wL.concat(wR)) : waveYRangeFromData(wL);
+  if (stereo) {
+    Plotly.restyle("wavePlot", {
+      x: [toX(wL.length), toX(wL.length)],
+      y: [wL, wR],
+    });
+  } else {
+    Plotly.restyle("wavePlot", { x: [toX(wL.length)], y: [wL] });
+  }
   Plotly.relayout("wavePlot", { "yaxis.range": yRange });
 }
 
@@ -359,7 +469,7 @@ syncGainLabel();
 
 function onResize() {
   if (!lastMsg) return;
-  drawScopeCanvas(lastMsg.wave);
+  drawScopeCanvas(lastMsg);
   drawSpectrumCanvas(lastMsg.mel);
 }
 
