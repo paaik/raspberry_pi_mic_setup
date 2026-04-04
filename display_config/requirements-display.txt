@@ -1,0 +1,4 @@
+# Raspberry Pi: install with pip (use venv or --break-system-packages per your OS policy)
+Adafruit-Blinka>=8.20.0
+adafruit-circuitpython-rgb-display>=3.4.0
+Pillow>=10.0.0
