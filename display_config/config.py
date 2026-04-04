@@ -16,7 +16,9 @@ SPI_BAUDRATE = 50_000_000  # Lower to 32_000_000 if you see glitches.
 # GPIO (BCM numbers) — must match your wiring
 PIN_DC = 25   # Data/Command — wiki: Pi phys pin 22
 PIN_RST = 27  # Reset — wiki: Pi phys pin 13
-PIN_BL = 18   # Backlight (PWM capable on 18) — wiki: Pi phys pin 12
+# Backlight: any free GPIO works (driver only sets on/off). Default wiki uses
+# GPIO18 (phys 12); use another pin if GPIO18 is I2S BCLK for microphones.
+PIN_BL = 12   # Example: GPIO12 (phys 32). Rewire LCD BL to this BCM pin.
 
 # ST7789 internal RAM is 240×320; this panel is 240×280. If image is shifted
 # vertically, try y_offset 0, 20, or 40 (see README).

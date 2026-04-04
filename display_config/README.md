@@ -16,9 +16,11 @@ Configuration and a small Python example to **show text** on the IPS SPI module.
 | CS           | CE0    | GPIO8 (CE0)        | **24**       |
 | DC           | D/C    | **GPIO25**         | **22**       |
 | RST          | Reset  | **GPIO27**         | **13**       |
-| BL           | Backlight | **GPIO18**      | **12**       |
+| BL           | Backlight | **GPIO12** | **32**       |
 
 Use **3.3 V** logic (module has level shifting; still avoid 5 V on GPIO).
+
+**Backlight:** Waveshare’s wiki uses GPIO18 (phys 12). This repo defaults to **GPIO12** (phys 32) so **GPIO18** can stay on **I2S** (e.g. microphone BCLK). Connect the LCD **BL** lead to the Pi pin for your chosen BCM number and set `PIN_BL` in `config.py` to match.
 
 ## Enable SPI on Raspberry Pi OS
 
