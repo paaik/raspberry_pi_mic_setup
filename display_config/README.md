@@ -102,5 +102,6 @@ Waveshare ships C / Python demos in **`LCD_Module_RPI_code.zip`** (see wiki). Th
 
 - **`No module named 'board'`** — install **Adafruit-Blinka** (`requirements-display.txt`).
 - **`Permission denied` on `/dev/spidev0.0`** — add user to **`spi`** group (see above).
-- **Blank screen, wiring OK** — confirm backlight GPIO18 is high (script sets it); try lowering `SPI_BAUDRATE`.
+- **`lgpio.error: 'GPIO busy'` on `board.CE0`** — on **Bookworm** (and many Pi **5** images), the kernel reserves **CE0 / GPIO8** for SPI. This repo’s `display_driver.py` uses **`cs=None`** so chip select is handled by **`/dev/spidev0.0`** instead of Python toggling CE0. If you changed that back to `DigitalInOut(board.CE0)`, revert it or use a **software CS on another GPIO** and rewire the LCD **CS** line to match.
+- **Blank screen, wiring OK** — confirm backlight (`PIN_BL` in `config.py`) is high; try lowering `SPI_BAUDRATE`.
 - **Pi 5** — use current Bookworm + Blinka; if GPIO names differ, set pins in `config.py` and map them in `display_driver.py` using the names shown by `pinout` on the Pi.

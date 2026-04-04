@@ -16,8 +16,10 @@ import config as cfg
 def create_display() -> st7789.ST7789:
     spi = board.SPI()
 
-    cs = digitalio.DigitalInOut(board.CE0)
-    cs.direction = digitalio.Direction.OUTPUT
+    # On Raspberry Pi OS Bookworm+, GPIO8 (CE0) is owned by the SPI driver when
+    # SPI is enabled, so DigitalInOut(board.CE0) raises lgpio "GPIO busy".
+    # /dev/spidev0.0 already drives CE0 per transfer — no separate CS pin object.
+    cs = None
 
     dc = digitalio.DigitalInOut(getattr(board, f"D{cfg.PIN_DC}"))
     dc.direction = digitalio.Direction.OUTPUT
