@@ -1,5 +1,7 @@
 import argparse
+import os
 import shutil
+import tempfile
 import threading
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -7,13 +9,14 @@ from typing import Any, Optional
 import numpy as np
 import asyncio
 from pathlib import Path
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from audio.capture_alsa import AlsaDevice, AlsaI2SMicCapture
 from audio.dsp import AudioDsp, DspConfig
+from audio.wav_export import write_s32le_stereo_wav
 
 
 @dataclass
@@ -65,6 +68,16 @@ class AudioPipeline:
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
+        # 15 s stereo WAV (mic pair 1 = ALSA channels 0+1): filled by capture thread
+        self._record_lock = threading.Lock()
+        self._recording = False
+        self._record_chunks: list[np.ndarray] = []
+        self._record_frames_target = 0
+        self._record_frame_count = 0
+        self._record_done = threading.Event()
+        self._record_result_path: Optional[str] = None
+        self._record_error: Optional[str] = None
+
     def start(self) -> None:
         if self._thread is not None:
             return
@@ -93,6 +106,13 @@ class AudioPipeline:
 
         while not self._stop.is_set():
             samples = self.capture.read_block()
+            if self._recording:
+                with self._record_lock:
+                    if self._recording:
+                        self._record_chunks.append(samples.copy())
+                        self._record_frame_count += int(samples.shape[0])
+                        if self._record_frame_count >= self._record_frames_target:
+                            self._finalize_stereo_mic1_recording()
             if self.multichannel:
                 out = self.dsp.process_int32_multichannel(samples)
                 wave_ch = [
@@ -161,6 +181,77 @@ class AudioPipeline:
                 mel=[list(row) for row in self._latest.mel],
             )
 
+    def _finalize_stereo_mic1_recording(self) -> None:
+        """Build 15 s stereo WAV from mic pair 1 (ALSA ch 0 = 1L, ch 1 = 1R). Caller holds no lock."""
+        try:
+            if not self._record_chunks:
+                self._record_error = "no samples captured"
+                return
+            cat = np.concatenate(self._record_chunks, axis=0)
+            cat = cat[: self._record_frames_target]
+            ch = self.capture.channels
+            if ch == 1:
+                L = R = cat.astype(np.int32, copy=False)
+            elif cat.ndim == 2 and cat.shape[1] >= 2:
+                L = cat[:, 0].astype(np.int32, copy=False)
+                R = cat[:, 1].astype(np.int32, copy=False)
+            else:
+                self._record_error = "unexpected sample shape"
+                return
+            n = min(L.size, R.size)
+            L = L[:n]
+            R = R[:n]
+            interleaved = np.empty(2 * n, dtype=np.int32)
+            interleaved[0::2] = L
+            interleaved[1::2] = R
+            fd, path = tempfile.mkstemp(suffix=".wav", prefix="mic1_stereo_")
+            os.close(fd)
+            write_s32le_stereo_wav(path, interleaved, self.capture.sample_rate)
+            self._record_result_path = path
+        except Exception as e:
+            self._record_error = str(e)
+        finally:
+            self._recording = False
+            self._record_chunks = []
+            self._record_frame_count = 0
+            self._record_done.set()
+
+    def request_stereo_mic1_wav_15s(self) -> str:
+        """
+        Record exactly 15 s from the live ALSA stream: stereo file = channels 0 and 1
+        (FPGA mic pair 1 left/right, or full stereo bus when --channels 2).
+        Blocks until the capture thread finishes writing the WAV (max ~20 s).
+        """
+        with self._record_lock:
+            if self._recording:
+                raise RuntimeError("Recording already in progress")
+            if self._thread is None or not self._thread.is_alive():
+                raise RuntimeError("Capture thread is not running")
+            self._record_chunks = []
+            self._record_frame_count = 0
+            self._record_frames_target = 15 * self.capture.sample_rate
+            self._recording = True
+            self._record_done.clear()
+            self._record_result_path = None
+            self._record_error = None
+        if not self._record_done.wait(timeout=22.0):
+            with self._record_lock:
+                self._recording = False
+                self._record_chunks = []
+            raise TimeoutError("Recording timed out (is ALSA capture running?)")
+        err = self._record_error
+        path = self._record_result_path
+        if err:
+            if path and os.path.isfile(path):
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+            raise RuntimeError(err)
+        if not path or not os.path.isfile(path):
+            raise RuntimeError("Recording failed (no file)")
+        return path
+
 
 def _parse_alsa_hw(hw: str) -> AlsaDevice:
     # Accept: hw:1,0 or 1,0
@@ -178,6 +269,40 @@ def build_app(pipeline: AudioPipeline) -> FastAPI:
     base_dir = Path(__file__).resolve().parent
     templates = Jinja2Templates(directory=str(base_dir / "web" / "templates"))
     app.mount("/static", StaticFiles(directory=str(base_dir / "web" / "static")), name="static")
+
+    @app.get("/api/record/stereo_mic1_15s.wav")
+    async def download_stereo_mic1_15s() -> Any:
+        """15 s stereo WAV: ALSA channels 0+1 (mic pair 1 on 8-ch FPGA; full L/R when --channels 2)."""
+        loop = asyncio.get_event_loop()
+
+        def run_record() -> str:
+            return pipeline.request_stereo_mic1_wav_15s()
+
+        try:
+            path = await loop.run_in_executor(None, run_record)
+        except RuntimeError as e:
+            msg = str(e)
+            code = 409 if "already in progress" in msg else 503
+            raise HTTPException(status_code=code, detail=msg) from e
+        except TimeoutError as e:
+            raise HTTPException(status_code=504, detail=str(e)) from e
+
+        def read_and_remove() -> bytes:
+            try:
+                with open(path, "rb") as f:
+                    return f.read()
+            finally:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+
+        data = await loop.run_in_executor(None, read_and_remove)
+        return Response(
+            content=data,
+            media_type="audio/wav",
+            headers={"Content-Disposition": 'attachment; filename="stereo_mic1_15s.wav"'},
+        )
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> Any:

@@ -71,6 +71,22 @@
         font-size: 13px;
         opacity: 0.95;
       }
+      #recordMic1Btn {
+        padding: 8px 14px;
+        border-radius: 8px;
+        border: 1px solid #334155;
+        background: #1e293b;
+        color: #e2e8f0;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      #recordMic1Btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      #recordMic1Btn:not(:disabled):hover {
+        background: #334155;
+      }
       #waveGain {
         width: min(280px, 100%);
         accent-color: #38bdf8;
@@ -90,6 +106,12 @@
           <div id="dbValue" style="white-space: pre-line">-</div>
         </div>
         <div id="status" class="small" style="margin-top: 8px">Connecting...</div>
+        <div class="row" style="margin-top: 10px; align-items: center">
+          <button type="button" id="recordMic1Btn" title="Saves ALSA channels 0+1 as L/R (mic pair 1 on 8-ch)">
+            Record 15 s WAV — mic 1 stereo
+          </button>
+          <span id="recordMic1Status" class="small" style="opacity: 0.85"></span>
+        </div>
       </div>
 
       <div class="card">

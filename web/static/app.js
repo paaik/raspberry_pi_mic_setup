@@ -692,6 +692,40 @@ window.addEventListener("resize", () => {
   resizeT = setTimeout(onResize, 120);
 });
 
+const recordMic1Btn = document.getElementById("recordMic1Btn");
+const recordMic1Status = document.getElementById("recordMic1Status");
+
+if (recordMic1Btn) {
+  recordMic1Btn.addEventListener("click", async () => {
+    recordMic1Btn.disabled = true;
+    if (recordMic1Status) recordMic1Status.textContent = "Recording 15 s…";
+    try {
+      const r = await fetch("/api/record/stereo_mic1_15s.wav");
+      if (!r.ok) {
+        const t = await r.text();
+        throw new Error(t || r.statusText);
+      }
+      const blob = await r.blob();
+      const u = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = u;
+      a.download = "stereo_mic1_15s.wav";
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(u);
+      if (recordMic1Status) recordMic1Status.textContent = "Download started.";
+    } catch (e) {
+      if (recordMic1Status) {
+        recordMic1Status.textContent = `Error: ${e && e.message ? e.message : e}`;
+      }
+    } finally {
+      recordMic1Btn.disabled = false;
+    }
+  });
+}
+
 function start() {
   const ws = new WebSocket(wsUrl());
 

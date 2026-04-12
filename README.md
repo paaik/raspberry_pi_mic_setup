@@ -67,6 +67,8 @@ Then open:
 
 `http://localhost:8000`
 
+In the browser, **Record 15 s WAV — mic 1 stereo** saves a file with **left = ALSA channel 0** and **right = ALSA channel 1** (the first stereo pair: **1L / 1R** on an 8-mic FPGA capture, or the normal L/R bus when `--channels 2`). Mono (`--channels 1`) saves the same signal on both channels.
+
 ### Notes
 
 - If you omit `--alsa-hw`, the program will try to auto-pick the first ALSA input device it finds.
