@@ -95,6 +95,7 @@
       <div class="card">
         <div class="small" style="margin-bottom: 8px">
           Waveform <span id="waveChLabel" class="small" style="opacity: 0.75"></span>
+          <span id="fpgaModeNote" class="small" style="opacity: 0.65; display: none"></span>
         </div>
         <div class="wave-controls">
           <label for="waveGain">Display gain</label>
@@ -107,22 +108,24 @@
 
       <div class="card">
         <div class="small" style="margin-bottom: 8px">Scope (VLC-style)</div>
-        <div class="small" style="opacity: 0.75; margin-bottom: 8px">
+        <div id="scopeHelp" class="small" style="opacity: 0.75; margin-bottom: 8px">
           Canvas oscilloscope (raw amplitude, no gain slider). Stereo: L = green, R = magenta.
         </div>
         <canvas id="scopeCanvas" class="vlc-canvas" width="800" height="280"></canvas>
       </div>
 
       <div class="card">
-        <div class="small" style="margin-bottom: 8px">Spectrum analyzer (VLC-style)</div>
-        <div class="small" style="opacity: 0.75; margin-bottom: 8px">
+        <div class="small" style="margin-bottom: 8px">Level meters (VLC-style)</div>
+        <div id="vuHelp" class="small" style="opacity: 0.75; margin-bottom: 8px">
           Canvas bars from the latest mel column (green → yellow → red).
         </div>
         <canvas id="spectrumCanvas" class="vlc-canvas" width="800" height="260"></canvas>
       </div>
 
       <div class="card">
-        <div class="small" style="margin-bottom: 8px">Mel Spectrogram (dB)</div>
+        <div class="small" style="margin-bottom: 8px">
+          Mel Spectrogram (dB) <span id="melSubtitle" class="small" style="opacity: 0.65"></span>
+        </div>
         <div id="melPlot"></div>
       </div>
     </div>

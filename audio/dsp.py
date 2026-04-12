@@ -146,9 +146,9 @@ class RingBuffer2DCols:
 
 
 class AudioDsp:
-    def __init__(self, cfg: DspConfig | None = None, *, stereo: bool = False) -> None:
+    def __init__(self, cfg: DspConfig | None = None, *, channels: int = 1) -> None:
         self.cfg = cfg or DspConfig()
-        self._stereo = bool(stereo)
+        self._channels = max(1, int(channels))
 
         self._window = np.hanning(self.cfg.n_fft).astype(np.float32)
 
@@ -167,7 +167,14 @@ class AudioDsp:
         wave_step = int((self.cfg.sample_rate * self.cfg.wave_window_sec) / self.cfg.wave_points)
         self._wave_step = max(1, wave_step)
         self._wave = RingBuffer1D(self.cfg.wave_points, dtype=np.float32)
-        self._wave_r: RingBuffer1D | None = RingBuffer1D(self.cfg.wave_points, dtype=np.float32) if self._stereo else None
+        self._wave_r: RingBuffer1D | None = (
+            RingBuffer1D(self.cfg.wave_points, dtype=np.float32) if self._channels == 2 else None
+        )
+        self._wave_ch: list[RingBuffer1D] | None = (
+            [RingBuffer1D(self.cfg.wave_points, dtype=np.float32) for _ in range(self._channels)]
+            if self._channels > 2
+            else None
+        )
 
         self._pending = np.zeros((0,), dtype=np.float32)
 
@@ -258,6 +265,60 @@ class AudioDsp:
             "db_r": db_r,
             "wave": self._wave.ordered(),
             "wave_r": self._wave_r.ordered(),
+            "mel": self._mel.ordered(),
+        }
+
+    def process_int32_multichannel(self, pcm_i32: np.ndarray) -> dict:
+        """
+        Interleaved multi-mic PCM: shape (frames, C), int32 per channel.
+        Order (e.g. C=8): ch1 L, ch1 R, ch2 L, ch2 R, ch3 L, ch3 R, ch4 L, ch4 R.
+        Mel spectrogram uses the mean across channels for one shared heatmap.
+        """
+        if pcm_i32.ndim != 2:
+            raise ValueError("multichannel expects shape (frames, channels)")
+        n_ch = pcm_i32.shape[1]
+        if n_ch != self._channels or self._wave_ch is None:
+            raise ValueError("channel count mismatch")
+
+        x = pcm_i32.astype(np.float32, copy=False) / 2147483648.0
+        db_ch: list[float] = []
+        for c in range(n_ch):
+            xc = x[:, c]
+            rms = float(np.sqrt(np.mean(xc * xc) + 1e-18))
+            db_ch.append(
+                float(np.clip(20.0 * math.log10(rms + 1e-18), self.cfg.db_floor, self.cfg.db_ceiling))
+            )
+
+        mix = np.mean(x, axis=1)
+        rms_mix = float(np.sqrt(np.mean(mix * mix) + 1e-18))
+        self._latest_db = float(
+            np.clip(20.0 * math.log10(rms_mix + 1e-18), self.cfg.db_floor, self.cfg.db_ceiling)
+        )
+
+        for c in range(n_ch):
+            self._wave_ch[c].append(x[:, c][:: self._wave_step])
+
+        self._pending = np.concatenate([self._pending, mix])
+        n_fft = self.cfg.n_fft
+        hop = self.cfg.hop_length
+        while self._pending.size >= n_fft:
+            frame = self._pending[:n_fft]
+            self._pending = self._pending[hop:]
+
+            windowed = frame * self._window
+            spec = np.fft.rfft(windowed, n=n_fft)
+            power = (np.abs(spec) ** 2).astype(np.float32)
+
+            mel_power = self._mel_fb @ power
+            mel_db = 10.0 * np.log10(mel_power + 1e-12)
+            mel_db = np.clip(mel_db, self.cfg.db_floor, self.cfg.db_ceiling)
+            self._mel.append_column(mel_db.astype(np.float32))
+
+        wave_ch = [wb.ordered() for wb in self._wave_ch]
+        return {
+            "db": self._latest_db,
+            "db_ch": db_ch,
+            "wave_ch": wave_ch,
             "mel": self._mel.ordered(),
         }
 

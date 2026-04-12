@@ -53,6 +53,16 @@ python3 server.py --port 8000 --alsa-hw hw:<CARD>,<DEVICE> --channels 1
 python3 server.py --port 8000 --alsa-hw hw:<CARD>,<DEVICE> --channels 2
 ```
 
+**FPGA → Raspberry Pi (eight I2S microphones on one interleaved stream):**
+
+The FPGA drives the mics and presents a **single I²S-style interface** to the Pi: **bit clock**, **word / LR clock**, and **one serial data line** carrying **eight 32-bit PCM words per sample period** in this order: mic **1L, 1R, 2L, 2R, 3L, 3R, 4L, 4R**. The Pi must see that stream as an **8-channel ALSA capture** (`S32_LE`). Your FPGA may pack samples in **256-word** hardware frames; as long as ALSA exposes continuous interleaved 8-channel PCM, this app will parse it.
+
+```bash
+python3 server.py --port 8000 --alsa-hw hw:<CARD>,<DEVICE> --channels 8 --sample-rate 48000
+```
+
+The dashboard then shows **per-channel dBFS**, **eight waveforms**, a **stacked VLC-style scope**, **eight VU bars**, and a **mel spectrogram** computed from the **mean** of all eight channels.
+
 Then open:
 
 `http://localhost:8000`
@@ -62,6 +72,7 @@ Then open:
 - If you omit `--alsa-hw`, the program will try to auto-pick the first ALSA input device it finds.
 - dB is displayed as *relative dBFS* (uncalibrated). 0 dBFS corresponds to full-scale PCM.
 - With `--channels 2`, the dashboard shows **L** and **R** waveforms/scopes and **L/R dB**; the **mel spectrogram** and **spectrum bars** use **(L+R)/2** so you still get one time–frequency view.
+- With **`--channels 8`**, avoid GPIO conflicts with the **Waveshare display** (see table below).
 
 ## Two I2S microphones on one Raspberry Pi (stereo)
 
@@ -88,6 +99,24 @@ The Pi then sees **one stereo capture** (L slot / R slot on the shared data line
 
 ```bash
 arecord -D hw:<CARD>,<DEVICE> -c 2 -r 48000 -f S32_LE -t wav -d 3 -V stereo test_stereo.wav
+```
+
+### GPIO: FPGA I²S vs LCD (no shared pins)
+
+Wire the FPGA to the Pi’s **primary I²S** pins (PCM). These do **not** overlap the **SPI display** pins used in `display_config/` (MOSI/SCLK/CE0, D/C, RST, BL).
+
+| Signal | BCM GPIO | Physical pin | Notes |
+|--------|-----------|--------------|--------|
+| **BCLK** (bit clock from FPGA) | **18** | 12 | PCM_CLK; keep free if you use it for I²S |
+| **LRCLK** / word select | **19** | 35 | PCM_FS |
+| **DIN** / SD (data into Pi) | **20** | 38 | PCM_DIN — 8 logical channels must appear interleaved in ALSA |
+
+**Display (do not use for I²S):** GPIO **8, 10, 11** (SPI0), **25** (D/C), **27** (RST), **12** (backlight in this repo’s `config.py`). Use **`config.py`** `PIN_BL` if you need to move the backlight off GPIO12.
+
+Getting **8-channel** capture usually requires the correct **machine driver / device-tree overlay** for your FPGA timing (standard stereo I²S only exposes two slots; TDM or a custom FPGA framing may need a bespoke overlay). Until `arecord -c 8` works for your card, the dashboard cannot receive eight channels.
+
+```bash
+arecord -D hw:<CARD>,<DEVICE> -c 8 -r 48000 -f S32_LE -t wav -d 3 test_8ch.wav
 ```
 
 ## Troubleshooting
