@@ -52,6 +52,30 @@
         margin-top: 8px;
         line-height: 1.45;
       }
+      #status.status-ok {
+        color: #86efac;
+      }
+      #status.status-warn {
+        color: #fbbf24;
+      }
+      #status.status-err {
+        color: #fca5a5;
+      }
+      #micHealth {
+        margin-top: 6px;
+        font-size: 0.88rem;
+        line-height: 1.4;
+        padding: 6px 0;
+      }
+      #micHealth.ok {
+        color: #4ade80;
+      }
+      #micHealth.warn {
+        color: #fbbf24;
+      }
+      #micHealth.muted {
+        opacity: 0.75;
+      }
       #captureHint {
         margin-top: 6px;
         padding: 8px 10px;
@@ -126,7 +150,8 @@
       <p class="brand-tag">FPGA 8-mic levels (dBFS)</p>
     </header>
     <div class="card">
-      <div id="status" class="small">Connecting to server…</div>
+      <div id="status" class="small">Polling server…</div>
+      <div id="micHealth" class="small muted" aria-live="polite"></div>
       <div id="captureHint" class="small" style="display: none"></div>
       <table aria-label="Per-channel levels">
         <thead>

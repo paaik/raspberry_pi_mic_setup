@@ -308,15 +308,21 @@ class AudioPipeline:
 
     def capture_dashboard_info(self) -> dict[str, Any]:
         cap = self.capture
-        dev = cap.device.hw_string if cap.device is not None else "auto (first arecord device)"
+        if getattr(cap, "device", None) is not None:
+            dev = cap.device.hw_string
+        else:
+            dev = getattr(cap, "source_label", "unknown")
         alive = self._thread is not None and self._thread.is_alive()
+        peak = self.last_block_peak
         return {
             "state": self.capture_state,
             "error": self.capture_error,
             "alsa_device": dev,
+            "capture_backend": getattr(cap, "backend", "alsa"),
             "sample_rate": cap.sample_rate,
             "pcm_blocks": self.pcm_blocks,
-            "last_block_peak_int32": self.last_block_peak,
+            "last_block_peak_int32": peak,
+            "has_nonzero_pcm": peak > 0,
             "capture_thread_alive": alive,
         }
 

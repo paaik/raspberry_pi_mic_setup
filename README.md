@@ -50,6 +50,8 @@ python3 server.py --capture-backend pi_sd --pi-sd-source /tmp/fpga_pi_sd --sampl
 
 Use **`--pi-sd-source -`** to read framed bytes from **stdin**. Decoding is in **`audio/pi_sd_decode.py`**; adjust there if your Verilog uses different **byte order** inside each 32-bit word. This repo does **not** implement the low-level clocked sampling of `pi_sd` — only **framed** 32-byte chunks.
 
+**Why `arecord -l` shows nothing:** the Linux kernel only lists **standard sound devices** (I²S/TDM/USB, etc.). A **custom serial bitstream** on `pi_sd` is **not** a microphone from ALSA’s point of view. There is **no small ALSA setting** to fix that — either **change the FPGA** to output a driver-supported I²S/TDM format, **write a kernel driver** that registers an ALSA card, or **bypass ALSA** with **`--capture-backend pi_sd`** and your own bridge into a FIFO/stdin as above. The dashboard shows **whether non-zero samples arrived** (`has_nonzero_pcm` / “Mics: active”) once the server is reading bytes.
+
 ### PI_ALN (optional, Pi → FPGA)
 
 | **PI_ALN** | **FPGA PCM (8 ch)** |
@@ -78,3 +80,4 @@ Getting **8-channel** capture usually needs a correct driver / device-tree for y
 - Dashboard stuck on **“Connecting…”** or **“Cannot reach /health”**: open the page at **`http://<pi-ip>:8000`** (same host/port as `server.py`). **HTTPS pages cannot call `http://` APIs** (mixed content) unless you terminate TLS with a reverse proxy on the same origin.
 - **`capture.state` failed** in `/health`: read `capture.error` (e.g. wrong `--alsa-hw`, device busy, or `arecord` missing).
 - **Levels stuck at ~−100 dBFS** with **`last_block_peak_int32` always 0**: PCM may be all zeros — wrong card/device, I²S not connected, or FPGA not driving **DOUT** (see the on-page hint when blocks exceed 40 and peak stays 0).
+- **Custom `pi_sd` only:** ensure something **writes 32-byte frames** to the FIFO (or stdin); opening a FIFO for **read** blocks until a **writer** opens. All-zero dBFS with rising **blocks** usually means the stream is zeros or not connected.
