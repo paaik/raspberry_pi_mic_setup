@@ -2,7 +2,8 @@
 Raw 256-bit frame capture for FPGA `pi_sd` — not kernel I²S/TDM / ALSA.
 
 Read a binary stream (FIFO, pipe, file, or ``-`` for stdin). Each **32-byte** chunk is one
-frame: eight little-endian int32 samples. Feeds the same ``read_block()`` shape as
+frame: eight int32 samples (default **big-endian** words to match Lattice ``pi_tdm_serializer``
+MSB-first output; see ``docs/fpga_pi_sd_framing.md``). Feeds the same ``read_block()`` shape as
 :class:`AlsaI2SMicCapture` so the DSP pipeline is unchanged.
 
 Wire-up on the Pi is project-specific (SPI slave, GPIO+buffer, etc.): this module only
@@ -38,12 +39,14 @@ class PiSdRawCapture:
         sample_rate: int = 48000,
         block_frames: int = 2048,
         aln_bcm: Optional[int] = None,
+        frame_word_endian: str = "big",
     ) -> None:
         self.source_path = source_path.strip()
         self.sample_rate = sample_rate
         self.channels = 8
         self.block_frames = block_frames
         self.aln_bcm = aln_bcm
+        self.frame_word_endian = frame_word_endian
 
         self.backend = "pi_sd"
         self.device = None
@@ -144,7 +147,7 @@ class PiSdRawCapture:
             return np.zeros((self.block_frames, self.channels), dtype=np.int32)
 
         try:
-            dec = decode_frames(raw)
+            dec = decode_frames(raw, word_endian=self.frame_word_endian)
         except ValueError:
             return np.zeros((self.block_frames, self.channels), dtype=np.int32)
 

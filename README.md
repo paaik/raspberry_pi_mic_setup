@@ -41,14 +41,16 @@ Open **`http://localhost:8000`**. The UI shows **per-channel dBFS**, **Record 15
 
 ### Raw `pi_sd` databus (custom 256-bit frames, no ALSA)
 
-If the FPGA drives **`pi_sd` + `pi_sck`** with **32-byte frames** (256 bits = eight little-endian `int32` samples per frame, order **1L, 1R, … 4R**) instead of standard I²S that `arecord` can open, use a **FIFO or pipe** (or stdin) as the bridge from your SPI/GPIO capture helper into Python:
+If the FPGA drives **`pi_sd` + `pi_sck`** with **32-byte frames** (256 bits = eight `int32` channels per frame, order **1L, 1R, … 4R**) instead of standard I²S that `arecord` can open, use a **FIFO or pipe** (or stdin) as the bridge from your SPI capture helper into Python.
+
+**Framing (Lattice RTL):** the serializer shifts **MSB first**; each channel word is **big-endian** on the wire. Default decode matches that: **`--pi-sd-frame-endian big`**. Details: **`docs/fpga_pi_sd_framing.md`**.
 
 ```bash
 mkfifo /tmp/fpga_pi_sd
 python3 server.py --capture-backend pi_sd --pi-sd-source /tmp/fpga_pi_sd --sample-rate 48000
 ```
 
-Use **`--pi-sd-source -`** to read framed bytes from **stdin**. Decoding is in **`audio/pi_sd_decode.py`**; adjust there if your Verilog uses different **byte order** inside each 32-bit word. This repo does **not** implement the low-level clocked sampling of `pi_sd` — only **framed** 32-byte chunks.
+Use **`--pi-sd-source -`** to read framed bytes from **stdin**. Use **`--pi-sd-frame-endian little`** only if your bridge byteswaps words. Decoding is in **`audio/pi_sd_decode.py`**. This repo does **not** implement low-level sampling of `pi_sd` — only **aligned** 32-byte chunks (see **`Past_Lattice 4 Avril copy/tools/pi_sd_dump_spi.py`** for spidev capture).
 
 **Why `arecord -l` shows nothing:** the Linux kernel only lists **standard sound devices** (I²S/TDM/USB, etc.). A **custom serial bitstream** on `pi_sd` is **not** a microphone from ALSA’s point of view. There is **no small ALSA setting** to fix that — either **change the FPGA** to output a driver-supported I²S/TDM format, **write a kernel driver** that registers an ALSA card, or **bypass ALSA** with **`--capture-backend pi_sd`** and your own bridge into a FIFO/stdin as above. The dashboard shows **whether non-zero samples arrived** (`has_nonzero_pcm` / “Mics: active”) once the server is reading bytes.
 

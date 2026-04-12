@@ -324,6 +324,7 @@ class AudioPipeline:
             "last_block_peak_int32": peak,
             "has_nonzero_pcm": peak > 0,
             "capture_thread_alive": alive,
+            "pi_sd_frame_endian": getattr(cap, "frame_word_endian", None),
         }
 
 
@@ -437,6 +438,14 @@ def main() -> None:
         default="",
         help="FIFO, file, or - for stdin (32 bytes/frame). Required when --capture-backend pi_sd.",
     )
+    parser.add_argument(
+        "--pi-sd-frame-endian",
+        choices=("big", "little"),
+        default="big",
+        help="Per-channel int32 byte order inside each 32-byte frame. "
+        "'big' matches Lattice pi_tdm_serializer MSB-first (default). "
+        "Use 'little' only if your bridge swaps endianness.",
+    )
     parser.add_argument("--alsa-hw", type=str, default="", help="ALSA device, e.g. hw:1,0 (optional)")
     parser.add_argument("--sample-rate", type=int, default=48000)
     parser.add_argument("--format", type=str, default="S32_LE")
@@ -469,6 +478,7 @@ def main() -> None:
             sample_rate=args.sample_rate,
             block_frames=args.block_frames,
             aln_bcm=aln_bcm,
+            frame_word_endian=args.pi_sd_frame_endian,
         )
     else:
         capture = AlsaI2SMicCapture(
