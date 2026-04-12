@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -161,6 +162,29 @@ class AudioDsp:
         self._pending = np.zeros((0,), dtype=np.float32)
 
         self._latest_db = float(self.cfg.db_floor)
+
+    def process_int32_fpga8_meters_only(self, pcm_i32: np.ndarray) -> dict[str, Any]:
+        """
+        Per-channel + mix dBFS only (no FFT, mel, or waveform buffers) — low CPU on the Pi.
+        """
+        if pcm_i32.ndim != 2 or pcm_i32.shape[1] != FPGA_CHANNELS:
+            raise ValueError(f"expected shape (frames, {FPGA_CHANNELS})")
+
+        x = pcm_i32.astype(np.float32, copy=False) / 2147483648.0
+        db_ch: list[float] = []
+        for c in range(FPGA_CHANNELS):
+            xc = x[:, c]
+            rms = float(np.sqrt(np.mean(xc * xc) + 1e-18))
+            db_ch.append(
+                float(np.clip(20.0 * math.log10(rms + 1e-18), self.cfg.db_floor, self.cfg.db_ceiling))
+            )
+
+        mix = np.mean(x, axis=1)
+        rms_mix = float(np.sqrt(np.mean(mix * mix) + 1e-18))
+        db = float(
+            np.clip(20.0 * math.log10(rms_mix + 1e-18), self.cfg.db_floor, self.cfg.db_ceiling)
+        )
+        return {"db": db, "db_ch": db_ch}
 
     def process_int32_fpga8(self, pcm_i32: np.ndarray) -> dict:
         """

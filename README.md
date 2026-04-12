@@ -1,6 +1,6 @@
 # FPGA 8-mic dashboard (Raspberry Pi)
 
-This project captures **eight interleaved `S32_LE` channels** from ALSA (FPGA TDM / eight I2S mics), computes per-channel **dBFS**, **eight decimated waveforms**, a **mel spectrogram** (mean of all channels), and serves a WebSocket dashboard at `http://localhost:<port>`.
+This project captures **eight interleaved `S32_LE` channels** from ALSA (FPGA TDM / eight I2S mics), computes per-channel **dBFS** (and optionally mel + waveforms), and serves a **lightweight** web UI at `http://localhost:<port>` that **polls `GET /health`** (no Plotly, no WebSocket — easy on the Pi browser).
 
 Channel order: **1L, 1R, 2L, 2R, 3L, 3R, 4L, 4R**.
 
@@ -35,8 +35,9 @@ python3 server.py --port 8000 --alsa-hw hw:<CARD>,<DEVICE> --sample-rate 48000
 - Omit **`--alsa-hw`** to auto-pick the first capture device (if any).
 - **`--aln-gpio`** defaults to **BCM 16** (PI_ALN → FPGA). Use **`--aln-gpio 0`** if unwired.
 - **`POST /api/fpga/aln-align`** or the dashboard button runs the PI_ALN TDM alignment handshake (not at startup).
+- By default the server runs **meters-only DSP** (dBFS per channel + mix). Use **`--full-dsp`** if you need mel + wave buffers for your own tooling (heavier on the Pi).
 
-Open **`http://localhost:8000`**. The UI shows **eight** waveforms, stacked scopes, VU bars, mel (mean of 8 ch), **Record 15sec .WAV -ch1** (mic pair 1 = ALSA ch 0+1), and **Run FPGA TDM alignment** when ALN is enabled.
+Open **`http://localhost:8000`**. The UI shows **per-channel dBFS**, **Record 15sec .WAV -ch1** (mic pair 1 = ALSA ch 0+1), and **Run FPGA TDM alignment** when ALN is enabled.
 
 ### PI_ALN (optional, Pi → FPGA)
 

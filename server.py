@@ -6,10 +6,10 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Optional
 
-import numpy as np
 import asyncio
+import numpy as np
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -21,7 +21,7 @@ from audio.wav_export import write_s32le_stereo_wav
 
 @dataclass
 class LatestFrame:
-    """WebSocket JSON: eight FPGA mics + mix dB + mel."""
+    """Latest meters (+ optional waveform/mel when --full-dsp)."""
 
     stereo: bool
     channels: int
@@ -41,14 +41,17 @@ class AudioPipeline:
         *,
         capture: AlsaI2SMicCapture,
         dsp: AudioDsp,
-        send_rate_hz: float = 10.0,
+        meters_only: bool = True,
     ) -> None:
         self.capture = capture
         self.dsp = dsp
-        self.send_rate_hz = float(send_rate_hz)
+        self.meters_only = bool(meters_only)
 
         z = [0.0] * dsp.cfg.wave_points
         n_ch = FPGA_CHANNELS
+        self._ph_wave_ch = [list(z) for _ in range(n_ch)]
+        self._ph_mel = [[dsp.cfg.db_floor] * dsp.cfg.mel_cols for _ in range(dsp.cfg.n_mels)]
+
         self._lock = threading.Lock()
         self._latest: LatestFrame = LatestFrame(
             stereo=False,
@@ -125,22 +128,38 @@ class AudioPipeline:
                         self._record_frame_count += int(samples.shape[0])
                         if self._record_frame_count >= self._record_frames_target:
                             self._finalize_stereo_mic1_recording()
-            out = self.dsp.process_int32_fpga8(samples)
-            wave_ch = [np.asarray(w, dtype=np.float32).round(8).tolist() for w in out["wave_ch"]]
-            z = [0.0] * self.dsp.cfg.wave_points
-            with self._lock:
-                self._latest = LatestFrame(
-                    stereo=False,
-                    channels=FPGA_CHANNELS,
-                    db=float(out["db"]),
-                    db_l=float(out["db"]),
-                    db_r=float(out["db"]),
-                    db_ch=[float(x) for x in out["db_ch"]],
-                    wave=wave_ch[0] if wave_ch else list(z),
-                    wave_r=wave_ch[1] if len(wave_ch) > 1 else list(z),
-                    wave_ch=wave_ch,
-                    mel=np.asarray(out["mel"], dtype=np.float32).round(2).tolist(),
-                )
+            if self.meters_only:
+                out = self.dsp.process_int32_fpga8_meters_only(samples)
+                with self._lock:
+                    self._latest = LatestFrame(
+                        stereo=False,
+                        channels=FPGA_CHANNELS,
+                        db=float(out["db"]),
+                        db_l=float(out["db"]),
+                        db_r=float(out["db"]),
+                        db_ch=[float(x) for x in out["db_ch"]],
+                        wave=self._ph_wave_ch[0],
+                        wave_r=self._ph_wave_ch[1],
+                        wave_ch=self._ph_wave_ch,
+                        mel=self._ph_mel,
+                    )
+            else:
+                out = self.dsp.process_int32_fpga8(samples)
+                wave_ch = [np.asarray(w, dtype=np.float32).round(8).tolist() for w in out["wave_ch"]]
+                z = [0.0] * self.dsp.cfg.wave_points
+                with self._lock:
+                    self._latest = LatestFrame(
+                        stereo=False,
+                        channels=FPGA_CHANNELS,
+                        db=float(out["db"]),
+                        db_l=float(out["db"]),
+                        db_r=float(out["db"]),
+                        db_ch=[float(x) for x in out["db_ch"]],
+                        wave=wave_ch[0] if wave_ch else list(z),
+                        wave_r=wave_ch[1] if len(wave_ch) > 1 else list(z),
+                        wave_ch=wave_ch,
+                        mel=np.asarray(out["mel"], dtype=np.float32).round(2).tolist(),
+                    )
 
     def get_latest(self) -> LatestFrame:
         with self._lock:
@@ -336,35 +355,10 @@ def build_app(pipeline: AudioPipeline) -> FastAPI:
             "db_l": latest.db_l,
             "db_r": latest.db_r,
             "db_ch": latest.db_ch,
+            "meters_only": pipeline.meters_only,
         }
         out.update(pipeline.aln_dashboard_info())
         return out
-
-    @app.websocket("/ws")
-    async def ws_endpoint(ws: WebSocket) -> None:
-        await ws.accept()
-        interval = 1.0 / max(1e-6, pipeline.send_rate_hz)
-
-        try:
-            while True:
-                latest = pipeline.get_latest()
-                await ws.send_json(
-                    {
-                        "stereo": latest.stereo,
-                        "channels": latest.channels,
-                        "db": latest.db,
-                        "db_l": latest.db_l,
-                        "db_r": latest.db_r,
-                        "db_ch": latest.db_ch,
-                        "wave": latest.wave,
-                        "wave_r": latest.wave_r,
-                        "wave_ch": latest.wave_ch,
-                        "mel": latest.mel,
-                    }
-                )
-                await asyncio.sleep(interval)
-        except WebSocketDisconnect:
-            return
 
     return app
 
@@ -383,8 +377,11 @@ def main() -> None:
         default=16,
         help="BCM GPIO for PI_ALN output to FPGA (default 16; avoids I²S 18–20 & typical LCD pins). Use 0 to disable.",
     )
-
-    parser.add_argument("--send-rate-hz", type=float, default=10.0)
+    parser.add_argument(
+        "--full-dsp",
+        action="store_true",
+        help="Compute mel + waveforms every block (heavy on the Pi). Default is meters-only (dBFS per channel).",
+    )
     args = parser.parse_args()
 
     device: Optional[AlsaDevice] = None
@@ -402,7 +399,7 @@ def main() -> None:
     )
     dsp = AudioDsp(DspConfig(sample_rate=args.sample_rate))
 
-    pipeline = AudioPipeline(capture=capture, dsp=dsp, send_rate_hz=args.send_rate_hz)
+    pipeline = AudioPipeline(capture=capture, dsp=dsp, meters_only=not args.full_dsp)
     pipeline.start()
 
     app = build_app(pipeline)
