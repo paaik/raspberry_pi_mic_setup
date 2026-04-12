@@ -83,6 +83,17 @@ class AudioPipeline:
         self._aln_align_done = threading.Event()
         self._aln_align_error: Optional[str] = None
 
+        # Diagnostics for /health (written from capture thread; reads are best-effort).
+        self.capture_state = "starting"
+        self.capture_error: Optional[str] = None
+        self.pcm_blocks = 0
+        self.last_block_peak = 0
+        self.aln_align_active = False
+        self.aln_backend_status = ""
+
+    def _on_aln_detail(self, msg: str) -> None:
+        self.aln_backend_status = msg
+
     def start(self) -> None:
         if self._thread is not None:
             return
@@ -99,28 +110,50 @@ class AudioPipeline:
             pass
 
     def _run_capture_loop(self) -> None:
+        self.capture_state = "starting"
+        self.capture_error = None
         try:
             if shutil.which("arecord") is None:
-                # Running on a dev machine without ALSA utilities.
+                self.capture_state = "failed"
+                self.capture_error = "arecord not found — install alsa-utils (e.g. apt install alsa-utils)"
                 return
 
             self.capture.start()
-        except Exception:
-            # Keep zeros in the dashboard rather than crashing the server.
+        except Exception as e:
+            self.capture_state = "failed"
+            self.capture_error = str(e) or repr(e)
             return
 
-        while not self._stop.is_set():
-            if self._aln_align_requested.is_set():
-                self._aln_align_requested.clear()
-                err: Optional[str] = None
-                try:
-                    self.capture.run_aln_alignment_now()
-                except Exception as e:
-                    err = str(e)
-                self._finish_aln_align(err)
-                continue
+        self.capture_state = "running"
 
-            samples = self.capture.read_block()
+        while not self._stop.is_set():
+            try:
+                if self._aln_align_requested.is_set():
+                    self._aln_align_requested.clear()
+                    self.aln_align_active = True
+                    self.aln_backend_status = "Starting PI_ALN handshake…"
+                    err: Optional[str] = None
+                    try:
+                        self.capture.run_aln_alignment_now(on_status=self._on_aln_detail)
+                    except Exception as e:
+                        err = str(e)
+                        self.aln_backend_status = f"ALN error: {err}"
+                    finally:
+                        self.aln_align_active = False
+                    self._finish_aln_align(err)
+                    continue
+
+                samples = self.capture.read_block()
+            except Exception as e:
+                self.capture_state = "failed"
+                self.capture_error = f"{type(e).__name__}: {e}"
+                break
+
+            self.pcm_blocks += 1
+            try:
+                self.last_block_peak = int(np.max(np.abs(samples)))
+            except Exception:
+                self.last_block_peak = 0
             if self._recording:
                 with self._record_lock:
                     if self._recording:
@@ -267,6 +300,22 @@ class AudioPipeline:
             "aln_gpio": cap.aln_bcm,
             "aln_capable": use_aln,
             "aln_gpio_ready": bool(getattr(cap, "_aln_gpio_ready", False)) if use_aln else False,
+            "aln_align_active": self.aln_align_active,
+            "aln_backend_status": self.aln_backend_status,
+        }
+
+    def capture_dashboard_info(self) -> dict[str, Any]:
+        cap = self.capture
+        dev = cap.device.hw_string if cap.device is not None else "auto (first arecord device)"
+        alive = self._thread is not None and self._thread.is_alive()
+        return {
+            "state": self.capture_state,
+            "error": self.capture_error,
+            "alsa_device": dev,
+            "sample_rate": cap.sample_rate,
+            "pcm_blocks": self.pcm_blocks,
+            "last_block_peak_int32": self.last_block_peak,
+            "capture_thread_alive": alive,
         }
 
 
@@ -358,6 +407,7 @@ def build_app(pipeline: AudioPipeline) -> FastAPI:
             "meters_only": pipeline.meters_only,
         }
         out.update(pipeline.aln_dashboard_info())
+        out["capture"] = pipeline.capture_dashboard_info()
         return out
 
     return app

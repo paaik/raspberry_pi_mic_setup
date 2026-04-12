@@ -64,3 +64,6 @@ Getting **8-channel** capture usually needs a correct driver / device-tree for y
 
 - No ALSA device: check wiring and overlays until `arecord -c 8` works.
 - Silence / garbage: confirm `test_8ch.wav`; try a lower effective rate or FPGA alignment (**PI_ALN** button).
+- Dashboard stuck on **“Connecting…”** or **“Cannot reach /health”**: open the page at **`http://<pi-ip>:8000`** (same host/port as `server.py`). **HTTPS pages cannot call `http://` APIs** (mixed content) unless you terminate TLS with a reverse proxy on the same origin.
+- **`capture.state` failed** in `/health`: read `capture.error` (e.g. wrong `--alsa-hw`, device busy, or `arecord` missing).
+- **Levels stuck at ~−100 dBFS** with **`last_block_peak_int32` always 0**: PCM may be all zeros — wrong card/device, I²S not connected, or FPGA not driving **DOUT** (see the on-page hint when blocks exceed 40 and peak stays 0).

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>FPGA 8-mic levels</title>
+    <title>Carlton Mars Lab — FPGA mic levels</title>
     <style>
       body {
         font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
@@ -11,12 +11,25 @@
         padding: 12px;
         background: #0b0f14;
         color: #e6edf3;
-        max-width: 520px;
+        max-width: 560px;
       }
-      h1 {
-        font-size: 1.1rem;
-        font-weight: 600;
-        margin: 0 0 10px;
+      .site-header {
+        margin-bottom: 12px;
+      }
+      .brand-logo {
+        background: #fff;
+        color: #2a4a9a;
+        font-weight: 700;
+        font-size: 1.2rem;
+        padding: 8px 14px;
+        border-radius: 6px;
+        display: inline-block;
+        letter-spacing: 0.02em;
+      }
+      .brand-tag {
+        margin: 8px 0 0;
+        font-size: 0.95rem;
+        opacity: 0.92;
       }
       .card {
         background: #111827;
@@ -37,6 +50,34 @@
       }
       #status {
         margin-top: 8px;
+        line-height: 1.45;
+      }
+      #captureHint {
+        margin-top: 6px;
+        padding: 8px 10px;
+        border-radius: 6px;
+        background: #0f172a;
+        border: 1px solid #334155;
+        font-size: 0.8rem;
+        line-height: 1.4;
+      }
+      #captureHint.warn {
+        border-color: #b45309;
+        background: #1c1410;
+      }
+      #captureHint.err {
+        border-color: #b91c1c;
+        background: #1c1010;
+      }
+      #alnDetail {
+        margin-top: 6px;
+        padding: 8px 10px;
+        border-radius: 6px;
+        background: #0c1220;
+        border: 1px solid #1e3a5f;
+        font-size: 0.78rem;
+        line-height: 1.45;
+        min-height: 2.5em;
       }
       table {
         width: 100%;
@@ -71,12 +112,22 @@
       button:not(:disabled):hover {
         background: #334155;
       }
+      #alnAlignBtn.aln-busy {
+        opacity: 1;
+        border-color: #38bdf8;
+        box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.35);
+        background: #0f172a;
+      }
     </style>
   </head>
   <body>
-    <h1>FPGA 8-mic (dBFS)</h1>
+    <header class="site-header">
+      <div class="brand-logo">Carlton Mars Lab</div>
+      <p class="brand-tag">FPGA 8-mic levels (dBFS)</p>
+    </header>
     <div class="card">
-      <div id="status" class="small">Loading…</div>
+      <div id="status" class="small">Connecting to server…</div>
+      <div id="captureHint" class="small" style="display: none"></div>
       <table aria-label="Per-channel levels">
         <thead>
           <tr>
@@ -84,7 +135,16 @@
             <th>dBFS</th>
           </tr>
         </thead>
-        <tbody id="meterBody"></tbody>
+        <tbody id="meterBody">
+          <tr><td>1 L</td><td>—</td></tr>
+          <tr><td>1 R</td><td>—</td></tr>
+          <tr><td>2 L</td><td>—</td></tr>
+          <tr><td>2 R</td><td>—</td></tr>
+          <tr><td>3 L</td><td>—</td></tr>
+          <tr><td>3 R</td><td>—</td></tr>
+          <tr><td>4 L</td><td>—</td></tr>
+          <tr><td>4 R</td><td>—</td></tr>
+        </tbody>
       </table>
       <div class="row small" id="mixRow" style="margin-top: 8px"></div>
       <div class="row">
@@ -99,7 +159,13 @@
         </button>
         <span id="alnAlignStatus" class="small"></span>
       </div>
+      <div id="alnDetail" class="small" style="margin-top: 8px">
+        Backend steps appear here while alignment runs (poll <code>/health</code>).
+      </div>
     </div>
+    <noscript>
+      <p style="color: #f87171">Enable JavaScript — this dashboard needs it to poll <code>/health</code>.</p>
+    </noscript>
     <script src="/static/app.js"></script>
   </body>
 </html>

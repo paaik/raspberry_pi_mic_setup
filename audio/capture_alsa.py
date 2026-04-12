@@ -2,7 +2,7 @@ import re
 import subprocess
 import threading
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
 
@@ -126,7 +126,7 @@ class AlsaI2SMicCapture:
         if self.aln_bcm is not None:
             self._aln_gpio_ready = try_init_aln_output(self.aln_bcm)
 
-    def run_aln_alignment_now(self) -> None:
+    def run_aln_alignment_now(self, on_status: Optional[Callable[[str], None]] = None) -> None:
         """
         Run PI_ALN + PCM discard/sync sequence (call only with arecord running on this object).
         """
@@ -146,6 +146,7 @@ class AlsaI2SMicCapture:
             channels=self.channels,
             block_bytes=self._bytes_per_block,
             aln_set=aln_set,
+            on_status=on_status,
         )
 
     def stop(self) -> None:
