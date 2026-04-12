@@ -6,6 +6,9 @@ from typing import Optional
 
 import numpy as np
 
+from audio.aln_gpio import aln_cleanup, aln_set, try_init_aln_output
+from audio.tdm_align import run_fpga_aln_alignment
+
 
 @dataclass(frozen=True)
 class AlsaDevice:
@@ -54,32 +57,33 @@ def _list_arecord_devices() -> list[AlsaDevice]:
     return devices
 
 
+FPGA_ALSA_CHANNELS = 8
+
+
 class AlsaI2SMicCapture:
     """
-    Capture I2S PCM from ALSA using `arecord` subprocess.
-
-    For DMM-4026-B-I2S-R (and similar MEMS I2S mics):
-      - 48 kHz
-      - 32-bit word containers -> S32_LE
-      - 1 channel (mono) or 2 channels (stereo L/R interleaved)
+    Capture 8-channel interleaved S32_LE PCM from ALSA (`arecord`) — FPGA TDM / eight mics.
     """
 
     def __init__(
         self,
         device: Optional[AlsaDevice] = None,
         sample_rate: int = 48000,
-        channels: int = 1,
         format_str: str = "S32_LE",
         block_frames: int = 2048,
+        aln_bcm: Optional[int] = None,
     ) -> None:
         self.device = device
         self.sample_rate = sample_rate
-        self.channels = channels
+        self.channels = FPGA_ALSA_CHANNELS
         self.format_str = format_str
         self.block_frames = block_frames
+        self.aln_bcm = aln_bcm
 
         self._proc: Optional[subprocess.Popen] = None
         self._stop_event = threading.Event()
+        self._pending_raw = bytearray()
+        self._aln_gpio_ready = False
 
         # 4 bytes per S32_LE sample
         self._bytes_per_block = self.block_frames * self.channels * 4
@@ -117,54 +121,81 @@ class AlsaI2SMicCapture:
             stderr=subprocess.PIPE,
         )
         self._stop_event.clear()
+        self._pending_raw.clear()
+
+        if self.aln_bcm is not None:
+            self._aln_gpio_ready = try_init_aln_output(self.aln_bcm)
+
+    def run_aln_alignment_now(self) -> None:
+        """
+        Run PI_ALN + PCM discard/sync sequence (call only with arecord running on this object).
+        """
+        if self.aln_bcm is None:
+            raise RuntimeError("ALN requires --aln-gpio (BCM)")
+        if self._proc is None or self._proc.stdout is None:
+            raise RuntimeError("Capture process is not running")
+        if not self._aln_gpio_ready:
+            self._aln_gpio_ready = try_init_aln_output(self.aln_bcm)
+        if not self._aln_gpio_ready:
+            raise RuntimeError(
+                "ALN GPIO unavailable (install RPi.GPIO on the Pi: pip install RPi.GPIO)"
+            )
+        run_fpga_aln_alignment(
+            take_bytes=self._take_bytes_exact,
+            putback=self._putback_raw,
+            channels=self.channels,
+            block_bytes=self._bytes_per_block,
+            aln_set=aln_set,
+        )
 
     def stop(self) -> None:
         self._stop_event.set()
         if self._proc is not None:
             self._proc.terminate()
             self._proc = None
+        self._pending_raw.clear()
+        if self._aln_gpio_ready:
+            aln_cleanup()
+            self._aln_gpio_ready = False
+
+    def _take_bytes_exact(self, n: int) -> bytes:
+        """Read exactly `n` bytes from pending buffer + arecord stdout."""
+        while len(self._pending_raw) < n:
+            if self._proc is None or self._proc.stdout is None:
+                return bytes(self._pending_raw[:n]) if self._pending_raw else b""
+            need = n - len(self._pending_raw)
+            chunk = self._proc.stdout.read(max(need, 4096))
+            if not chunk:
+                break
+            self._pending_raw.extend(chunk)
+        if len(self._pending_raw) < n:
+            out = bytes(self._pending_raw)
+            self._pending_raw.clear()
+            return out
+        out = bytes(self._pending_raw[:n])
+        del self._pending_raw[:n]
+        return out
+
+    def _putback_raw(self, data: bytes) -> None:
+        self._pending_raw[:0] = data
 
     def read_block(self) -> np.ndarray:
-        """
-        Returns int32 samples:
-          - mono: shape (frames,)
-          - stereo: shape (frames, 2) with columns [left, right] (interleaved L,R from ALSA)
-        """
+        """Returns int32 shape (frames, 8) interleaved."""
         if self._proc is None or self._proc.stdout is None:
-            return (
-                np.zeros((self.block_frames, self.channels), dtype=np.int32)
-                if self.channels > 1
-                else np.zeros((self.block_frames,), dtype=np.int32)
-            )
+            return np.zeros((self.block_frames, self.channels), dtype=np.int32)
 
         if self._stop_event.is_set():
-            return (
-                np.zeros((self.block_frames, self.channels), dtype=np.int32)
-                if self.channels > 1
-                else np.zeros((self.block_frames,), dtype=np.int32)
-            )
+            return np.zeros((self.block_frames, self.channels), dtype=np.int32)
 
-        raw = self._proc.stdout.read(self._bytes_per_block)
+        raw = self._take_bytes_exact(self._bytes_per_block)
         if raw is None or len(raw) != self._bytes_per_block:
-            return (
-                np.zeros((self.block_frames, self.channels), dtype=np.int32)
-                if self.channels > 1
-                else np.zeros((self.block_frames,), dtype=np.int32)
-            )
+            return np.zeros((self.block_frames, self.channels), dtype=np.int32)
 
         data = np.frombuffer(raw, dtype="<i4")
         need = self.block_frames * self.channels
         if data.shape[0] < need:
-            return (
-                np.zeros((self.block_frames, self.channels), dtype=np.int32)
-                if self.channels > 1
-                else np.zeros((self.block_frames,), dtype=np.int32)
-            )
+            return np.zeros((self.block_frames, self.channels), dtype=np.int32)
         data = data[:need]
 
-        if self.channels == 1:
-            return data.astype(np.int32, copy=False)
-
-        # Interleaved L,R,L,R -> (frames, 2)
         return data.reshape(self.block_frames, self.channels).astype(np.int32, copy=False)
 

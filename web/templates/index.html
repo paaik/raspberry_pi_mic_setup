@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Pi Mic Dashboard</title>
+    <title>FPGA 8-mic dashboard</title>
     <style>
       body {
         font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
@@ -87,6 +87,22 @@
       #recordMic1Btn:not(:disabled):hover {
         background: #334155;
       }
+      #alnAlignBtn {
+        padding: 8px 14px;
+        border-radius: 8px;
+        border: 1px solid #334155;
+        background: #1e293b;
+        color: #e2e8f0;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      #alnAlignBtn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      #alnAlignBtn:not(:disabled):hover {
+        background: #334155;
+      }
       #waveGain {
         width: min(280px, 100%);
         accent-color: #38bdf8;
@@ -107,17 +123,23 @@
         </div>
         <div id="status" class="small" style="margin-top: 8px">Connecting...</div>
         <div class="row" style="margin-top: 10px; align-items: center">
-          <button type="button" id="recordMic1Btn" title="Saves ALSA channels 0+1 as L/R (mic pair 1 on 8-ch)">
-            Record 15 s WAV — mic 1 stereo
+          <button type="button" id="recordMic1Btn" title="Record 15sec .WAV -ch1">
+            Record 15sec .WAV -ch1
           </button>
           <span id="recordMic1Status" class="small" style="opacity: 0.85"></span>
+        </div>
+        <div class="row" style="margin-top: 8px; align-items: center; flex-wrap: wrap">
+          <button type="button" id="alnAlignBtn" title="PI_ALN handshake: zeros, sync frame, then TDM (8-ch + GPIO only)">
+            Run FPGA TDM alignment (PI_ALN)
+          </button>
+          <span id="alnAlignStatus" class="small" style="opacity: 0.85"></span>
         </div>
       </div>
 
       <div class="card">
         <div class="small" style="margin-bottom: 8px">
           Waveform <span id="waveChLabel" class="small" style="opacity: 0.75"></span>
-          <span id="fpgaModeNote" class="small" style="opacity: 0.65; display: none"></span>
+          <span id="fpgaModeNote" class="small" style="opacity: 0.65"></span>
         </div>
         <div class="wave-controls">
           <label for="waveGain">Display gain</label>
@@ -129,17 +151,17 @@
       </div>
 
       <div class="card">
-        <div class="small" style="margin-bottom: 8px">Scope (VLC-style)</div>
+        <div class="small" style="margin-bottom: 8px">Scope</div>
         <div id="scopeHelp" class="small" style="opacity: 0.75; margin-bottom: 8px">
-          Canvas oscilloscope (raw amplitude, no gain slider). Stereo: L = green, R = magenta.
+          Stacked scopes: one row per channel (raw amplitude, no gain slider).
         </div>
         <canvas id="scopeCanvas" class="vlc-canvas" width="800" height="280"></canvas>
       </div>
 
       <div class="card">
-        <div class="small" style="margin-bottom: 8px">Level meters (VLC-style)</div>
+        <div class="small" style="margin-bottom: 8px">Level meters</div>
         <div id="vuHelp" class="small" style="opacity: 0.75; margin-bottom: 8px">
-          Canvas bars from the latest mel column (green → yellow → red).
+          Per-channel dBFS (green → yellow → red).
         </div>
         <canvas id="spectrumCanvas" class="vlc-canvas" width="800" height="260"></canvas>
       </div>
