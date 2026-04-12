@@ -419,6 +419,18 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8000)
 
+    parser.add_argument(
+        "--capture-backend",
+        choices=("alsa", "pi_sd"),
+        default="alsa",
+        help="alsa: kernel I²S/TDM via arecord. pi_sd: raw 32-byte frames from --pi-sd-source.",
+    )
+    parser.add_argument(
+        "--pi-sd-source",
+        type=str,
+        default="",
+        help="FIFO, file, or - for stdin (32 bytes/frame). Required when --capture-backend pi_sd.",
+    )
     parser.add_argument("--alsa-hw", type=str, default="", help="ALSA device, e.g. hw:1,0 (optional)")
     parser.add_argument("--sample-rate", type=int, default=48000)
     parser.add_argument("--format", type=str, default="S32_LE")
