@@ -42,6 +42,7 @@ function describeCapture(c) {
   const st = c.state;
   const err = c.error;
   const dev = c.alsa_device || "?";
+  const backend = c.capture_backend || "alsa";
   const sr = c.sample_rate;
   const blocks = c.pcm_blocks;
   const peak = c.last_block_peak_int32;
@@ -69,7 +70,11 @@ function describeCapture(c) {
     };
   }
   if (st === "running") {
-    let line = `Receiving PCM — device ${dev} @ ${sr} Hz · blocks ${blocks} · last block |max sample| = ${peak} (int32)`;
+    const src =
+      backend === "pi_sd"
+        ? `raw pi_sd stream ${dev} (256-bit / 32-byte frames → 8× int32)`
+        : `ALSA ${dev}`;
+    let line = `Receiving PCM (${backend}) — ${src} @ ${sr} Hz nominal · blocks ${blocks} · last block |max sample| = ${peak} (int32)`;
     if (blocks > 40 && peak === 0) {
       line +=
         " · If this stays 0, the stream may be all zeros (wrong device, I²S not wired, or FPGA silent).";

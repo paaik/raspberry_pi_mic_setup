@@ -1,13 +1,13 @@
 # FPGA 8-mic dashboard (Raspberry Pi)
 
-This project captures **eight interleaved `S32_LE` channels** from ALSA (FPGA TDM / eight I2S mics), computes per-channel **dBFS** (and optionally mel + waveforms), and serves a **lightweight** web UI at `http://localhost:<port>` that **polls `GET /health`** (no Plotly, no WebSocket — easy on the Pi browser).
+This project captures **eight int32 mic channels** either from **kernel ALSA** (`arecord`, I²S/TDM) or from a **raw `pi_sd` byte stream** (256-bit / 32-byte frames from a custom FPGA serializer — no Linux sound device). It computes per-channel **dBFS** (and optionally mel + waveforms), and serves a **lightweight** web UI at `http://localhost:<port>` that **polls `GET /health`** (no Plotly, no WebSocket — easy on the Pi browser).
 
 Channel order: **1L, 1R, 2L, 2R, 3L, 3R, 4L, 4R**.
 
 ## Requirements
 
 - Raspberry Pi OS (Bookworm recommended)
-- `alsa-utils`
+- `alsa-utils` (only if you use **`--capture-backend alsa`**)
 - Python 3
 - **`pip install RPi.GPIO`** on the Pi if you use **PI_ALN** (default BCM **16**)
 
@@ -38,6 +38,17 @@ python3 server.py --port 8000 --alsa-hw hw:<CARD>,<DEVICE> --sample-rate 48000
 - By default the server runs **meters-only DSP** (dBFS per channel + mix). Use **`--full-dsp`** if you need mel + wave buffers for your own tooling (heavier on the Pi).
 
 Open **`http://localhost:8000`**. The UI shows **per-channel dBFS**, **Record 15sec .WAV -ch1** (mic pair 1 = ALSA ch 0+1), and **Run FPGA TDM alignment** when ALN is enabled.
+
+### Raw `pi_sd` databus (custom 256-bit frames, no ALSA)
+
+If the FPGA drives **`pi_sd` + `pi_sck`** with **32-byte frames** (256 bits = eight little-endian `int32` samples per frame, order **1L, 1R, … 4R**) instead of standard I²S that `arecord` can open, use a **FIFO or pipe** (or stdin) as the bridge from your SPI/GPIO capture helper into Python:
+
+```bash
+mkfifo /tmp/fpga_pi_sd
+python3 server.py --capture-backend pi_sd --pi-sd-source /tmp/fpga_pi_sd --sample-rate 48000
+```
+
+Use **`--pi-sd-source -`** to read framed bytes from **stdin**. Decoding is in **`audio/pi_sd_decode.py`**; adjust there if your Verilog uses different **byte order** inside each 32-bit word. This repo does **not** implement the low-level clocked sampling of `pi_sd` — only **framed** 32-byte chunks.
 
 ### PI_ALN (optional, Pi → FPGA)
 

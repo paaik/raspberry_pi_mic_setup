@@ -79,6 +79,7 @@ class AlsaI2SMicCapture:
         self.format_str = format_str
         self.block_frames = block_frames
         self.aln_bcm = aln_bcm
+        self.backend = "alsa"
 
         self._proc: Optional[subprocess.Popen] = None
         self._stop_event = threading.Event()
@@ -87,6 +88,10 @@ class AlsaI2SMicCapture:
 
         # 4 bytes per S32_LE sample
         self._bytes_per_block = self.block_frames * self.channels * 4
+
+    @property
+    def source_label(self) -> str:
+        return self.device.hw_string if self.device is not None else "unknown"
 
     def start(self) -> None:
         if self.device is None:

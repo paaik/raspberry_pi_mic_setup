@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from audio.capture_alsa import AlsaDevice, AlsaI2SMicCapture
+from audio.capture_pi_sd import PiSdRawCapture
 from audio.dsp import FPGA_CHANNELS, AudioDsp, DspConfig
 from audio.wav_export import write_s32le_stereo_wav
 
@@ -113,7 +114,8 @@ class AudioPipeline:
         self.capture_state = "starting"
         self.capture_error = None
         try:
-            if shutil.which("arecord") is None:
+            need_arecord = getattr(self.capture, "backend", "alsa") == "alsa"
+            if need_arecord and shutil.which("arecord") is None:
                 self.capture_state = "failed"
                 self.capture_error = "arecord not found — install alsa-utils (e.g. apt install alsa-utils)"
                 return
@@ -440,13 +442,24 @@ def main() -> None:
 
     aln_bcm: Optional[int] = None if args.aln_gpio == 0 else args.aln_gpio
 
-    capture = AlsaI2SMicCapture(
-        device=device,
-        sample_rate=args.sample_rate,
-        format_str=args.format,
-        block_frames=args.block_frames,
-        aln_bcm=aln_bcm,
-    )
+    if args.capture_backend == "pi_sd":
+        src = args.pi_sd_source.strip()
+        if not src:
+            parser.error("--pi-sd-source is required when using --capture-backend pi_sd (FIFO path or -)")
+        capture: AlsaI2SMicCapture | PiSdRawCapture = PiSdRawCapture(
+            src,
+            sample_rate=args.sample_rate,
+            block_frames=args.block_frames,
+            aln_bcm=aln_bcm,
+        )
+    else:
+        capture = AlsaI2SMicCapture(
+            device=device,
+            sample_rate=args.sample_rate,
+            format_str=args.format,
+            block_frames=args.block_frames,
+            aln_bcm=aln_bcm,
+        )
     dsp = AudioDsp(DspConfig(sample_rate=args.sample_rate))
 
     pipeline = AudioPipeline(capture=capture, dsp=dsp, meters_only=not args.full_dsp)
