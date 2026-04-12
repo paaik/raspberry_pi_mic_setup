@@ -395,6 +395,10 @@ def build_app(pipeline: AudioPipeline) -> FastAPI:
             headers={"Content-Disposition": 'attachment; filename="stereo_mic1_15s.wav"'},
         )
 
+    @app.get("/favicon.ico")
+    async def favicon() -> Response:
+        return Response(status_code=204)
+
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> Any:
         # Starlette 0.28+ expects (request=..., name=..., context=...).

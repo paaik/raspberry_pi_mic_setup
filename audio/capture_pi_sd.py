@@ -13,15 +13,35 @@ your bridge writes to (e.g. ``mkfifo /run/fpga_pi_sd``).
 
 from __future__ import annotations
 
+import os
+import stat
 import sys
 import threading
-from typing import Callable, Optional
+from typing import BinaryIO, Callable, Optional
 
 import numpy as np
 
 from audio.aln_gpio import aln_cleanup, aln_set, try_init_aln_output
 from audio.pi_sd_decode import FRAME_BYTES, decode_frames
 from audio.tdm_align import run_fpga_aln_alignment
+
+
+def _open_binary_source(path: str) -> BinaryIO:
+    """
+    Open a byte source for capture.
+
+    **Named pipes (FIFO):** opening read-only blocks until another process opens the
+    FIFO for writing, which makes the server look \"stuck\" with no PCM. On Linux we
+    open the FIFO read+write so ``open`` returns immediately; we only consume data
+    via reads (same pattern as many daemons using FIFOs).
+    """
+    if path == "-":
+        return sys.stdin.buffer
+    st_mode = os.stat(path).st_mode
+    if stat.S_ISFIFO(st_mode):
+        # Linux: O_RDWR does not wait for an external writer (see fifo(7)).
+        return open(path, "rb+", buffering=0)
+    return open(path, "rb", buffering=0)
 
 
 class PiSdRawCapture:
@@ -66,10 +86,7 @@ class PiSdRawCapture:
         if not self.source_path:
             raise RuntimeError("pi_sd source path is empty (use --pi-sd-source)")
 
-        if self.source_path == "-":
-            self._fp = sys.stdin.buffer
-        else:
-            self._fp = open(self.source_path, "rb")
+        self._fp = _open_binary_source(self.source_path)
 
         self._stop_event.clear()
         self._pending_raw.clear()
