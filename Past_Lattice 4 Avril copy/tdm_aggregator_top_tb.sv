@@ -19,6 +19,7 @@ wire mic_sck;
 wire mic_ws;
 wire pi_sck;
 wire pi_sd;
+wire pi_ce_n;
 
 reg [FRAME_BITS-1:0] sampled_frame;
 integer checks_passed = 0;
@@ -45,7 +46,8 @@ tdm_aggregator_top dut (
     .mic_sd4(mic_sd4),
     .pi_aln(pi_aln),
     .pi_sck(pi_sck),
-    .pi_sd(pi_sd)
+    .pi_sd(pi_sd),
+    .pi_ce_n(pi_ce_n)
 );
 
 function automatic [FRAME_BITS-1:0] pack_frame(

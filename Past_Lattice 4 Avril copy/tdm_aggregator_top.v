@@ -22,10 +22,11 @@ module tdm_aggregator_top (
     input  wire mic_sd3,
     input  wire mic_sd4,
 
-    // Pi-side
+    // Pi-side (SPI framing: pi_sck + pi_sd + active-low pi_ce_n; pi_aln = host align)
     input  wire pi_aln,
     output wire pi_sck,
-    output wire pi_sd
+    output wire pi_sd,
+    output wire pi_ce_n
 );
 
 parameter integer WORD_BITS  = 32;
@@ -113,6 +114,7 @@ pi_tdm_serializer #(
     .frame_reg(frame_reg),
     .frame_valid(frame_valid),
     .pi_sd(pi_sd),
+    .pi_ce_n(pi_ce_n),
     .overflow(overflow),
     .serializer_busy(serializer_busy)
 );

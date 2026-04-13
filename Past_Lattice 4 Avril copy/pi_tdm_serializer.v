@@ -9,6 +9,10 @@ module pi_tdm_serializer #(
     input  wire                  frame_valid,
 
     output reg                   pi_sd           = 1'b0,
+    // Active-low SPI chip-select toward the Pi (FPGA is SPI master). Low only
+    // while shifting the marker frame (ST_SYNC) or TDM superframes (ST_RUN).
+    // High during pi_aln idle / ST_STOP zero frames so the Pi can ignore idle bits.
+    output reg                   pi_ce_n         = 1'b1,
     output reg                   overflow        = 1'b0,
     output reg                   serializer_busy = 1'b0
 );
@@ -73,12 +77,19 @@ always @(posedge clk_12m or posedge rst) begin
         ser_busy             <= 1'b0;
         serializer_busy      <= 1'b0;
         pi_sd                <= 1'b0;
+        pi_ce_n              <= 1'b1;
         frame_pending_clear  <= 1'b0;
         pi_aln_d             <= 1'b1;
     end else begin
         serializer_busy     <= ser_busy;
         frame_pending_clear <= 1'b0;
         pi_aln_d            <= pi_aln;
+        // Deassert CS during host flush (pi_aln) and idle zeros; assert during marker + RUN.
+        if (pi_aln)
+            pi_ce_n <= 1'b1;
+        else
+            pi_ce_n <= !((state == ST_SYNC) || (state == ST_RUN));
+
 // State machine transitions and output logic
         case (state)
         // While pi_aln is high we continuously send zero-valued 256-bit frames.

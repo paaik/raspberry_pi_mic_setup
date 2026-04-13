@@ -20,3 +20,5 @@ set_io mic_sd4 F12
 set_io pi_aln D12
 set_io pi_sd  C14
 set_io pi_sck B14
+# SPI CE to Pi BSC slave pin (BCM21 on Pi 3-class, BCM8 on Pi 4).
+set_io pi_ce_n D14

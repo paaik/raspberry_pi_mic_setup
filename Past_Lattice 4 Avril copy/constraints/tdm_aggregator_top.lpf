@@ -48,4 +48,8 @@ IOBUF PORT "pi_sd" IO_TYPE=LVCMOS33;
 LOCATE COMP "pi_sck" SITE "B14";
 IOBUF PORT "pi_sck" IO_TYPE=LVCMOS33;
 
+# SPI chip-select to Pi (active low).
+LOCATE COMP "pi_ce_n" SITE "D14";
+IOBUF PORT "pi_ce_n" IO_TYPE=LVCMOS33;
+
 # Dedicated board reset is intentionally not used as user I/O here.
