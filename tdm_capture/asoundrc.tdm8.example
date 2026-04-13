@@ -1,0 +1,20 @@
+# Copy to ~/.asoundrc or merge into /etc/asound.conf on the Pi.
+# Adjust `card` / `device` to match `aplay -l` / `arecord -l` (e.g. card 1 for i2s1 slave).
+#
+# 8 × 32-bit samples per frame: ch1L, ch1R, ch2L, ch2R, ch3L, ch3R, ch4L, ch4R (256 bits / frame on SD).
+
+pcm.tdm8 {
+  type hw
+  card 1
+  device 0
+  format S32_LE
+  channels 8
+  rate 48000
+  buffer_size 32768
+  period_size 4096
+}
+
+ctl.tdm8 {
+  type hw
+  card 1
+}

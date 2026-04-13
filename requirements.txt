@@ -1,6 +1,0 @@
-# Raspberry Pi: optional hardware capture
-#   sudo apt install python3-pigpio
-#   sudo pigpiod
-# pigpio is not required if you only use --mock-file for UI testing.
-
-flask>=3.0.0
