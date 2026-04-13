@@ -1,0 +1,123 @@
+:root {
+  color-scheme: dark;
+  --bg: #0f1115;
+  --panel: #171b22;
+  --text: #e8ecf1;
+  --muted: #9aa3ad;
+  --accent: #5bc0eb;
+  --warn: #f4d35e;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.45;
+}
+
+.header {
+  padding: 1.5rem clamp(1rem, 3vw, 2.5rem);
+  border-bottom: 1px solid #242a33;
+}
+
+.header h1 {
+  margin: 0 0 0.35rem;
+  font-size: clamp(1.25rem, 2.4vw, 1.75rem);
+  font-weight: 650;
+}
+
+.sub {
+  margin: 0;
+  color: var(--muted);
+  max-width: 52rem;
+}
+
+.status {
+  margin: 0.75rem 0 0;
+  color: var(--warn);
+  font-size: 0.95rem;
+}
+
+.diagram {
+  padding: 1rem clamp(1rem, 3vw, 2.5rem);
+  background: #12151b;
+  border-bottom: 1px solid #242a33;
+}
+
+.diagram h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.wiring {
+  margin: 0;
+  padding-left: 1.2rem;
+  color: var(--muted);
+}
+
+.wiring li {
+  margin: 0.25rem 0;
+}
+
+.sig {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 0.85rem;
+  padding: 1rem clamp(1rem, 3vw, 2.5rem) 2rem;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid #242a33;
+  border-radius: 10px;
+  padding: 0.9rem 1rem;
+}
+
+.card h3 {
+  margin: 0 0 0.35rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.meta {
+  margin: 0 0 0.6rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.meter {
+  height: 10px;
+  border-radius: 999px;
+  background: #0b0d11;
+  overflow: hidden;
+  border: 1px solid #242a33;
+}
+
+.fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #2a9d8f, #e9c46a);
+  transition: width 120ms linear;
+}
+
+.db {
+  margin-top: 0.45rem;
+  font-variant-numeric: tabular-nums;
+  font-size: 1.15rem;
+}
+
+code {
+  font-size: 0.88em;
+  color: #c7d2de;
+}

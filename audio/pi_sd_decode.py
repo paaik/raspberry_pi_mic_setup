@@ -1,56 +1,173 @@
-"""
-Decode FPGA 256-bit serial frames into eight int32 mic samples (no I²S / ALSA framing).
-
-See ``docs/fpga_pi_sd_framing.md`` for how this maps to the Lattice ``Past_Lattice 4 Avril``
-RTL (``superframe_loader`` + ``pi_tdm_serializer``).
-
-The stream is a contiguous sequence of **32-byte frames** (256 bits each). Each frame holds
-eight **32-bit signed** channel samples in order **ch0…ch7** (1L, 1R, … 4R).
-
-**Default word endian: big** (``>i4``). The FPGA shifts **MSB first**; ``frame_reg`` packs
-``{lane0, lane1, lane2, lane3}`` with lane0 in the **MSBs** of the 256-bit word, so the first
-byte on the wire is the **MSB of ch0** — i.e. **big-endian** representation of each int32.
-Use ``word_endian="little"`` only for bring-up tests or if your bridge byteswaps.
-"""
+"""256-bit superframe alignment and unpack (8 x signed 32-bit BE words)."""
 
 from __future__ import annotations
 
-import numpy as np
+import struct
+import threading
+from enum import Enum, auto
+from typing import Iterable, List, Tuple
 
-# 8 channels × 32 bits = 256 bits per frame
-FRAME_BYTES = 32
+from . import config as cfg
+
+# Human labels matching FPGA mic_sd lanes and I2S L/R slots
+CHANNEL_LABELS: Tuple[str, ...] = (
+    "Lane1 mic_sd1 · Left",
+    "Lane1 mic_sd1 · Right",
+    "Lane2 mic_sd2 · Left",
+    "Lane2 mic_sd2 · Right",
+    "Lane3 mic_sd3 · Left",
+    "Lane3 mic_sd3 · Right",
+    "Lane4 mic_sd4 · Left",
+    "Lane4 mic_sd4 · Right",
+)
 
 
-def _dtype_word(word_endian: str) -> str:
-    e = word_endian.lower().strip()
-    if e in ("big", "be"):
-        return ">i4"
-    if e in ("little", "le"):
-        return "<i4"
-    raise ValueError(f"word_endian must be 'big' or 'little', not {word_endian!r}")
+class _Phase(Enum):
+    """PI_ALN-driven alignment (see audio/config.py)."""
+
+    FLUSH_IDLE_ZEROS = auto()  # PI_ALN=1: discard until consecutive zero superframes
+    WAIT_MARKER = auto()  # PI_ALN=0: drop bytes until one MARKER, then stream
+    STREAM = auto()  # TDM superframes; PI_ALN must stay 0 per Verilog
 
 
-def decode_frames(raw: bytes, *, word_endian: str = "big") -> np.ndarray:
+def unpack_superframe(frame32: bytes) -> Tuple[int, ...]:
+    if len(frame32) != cfg.FRAME_BYTES:
+        raise ValueError(f"expected {cfg.FRAME_BYTES} bytes, got {len(frame32)}")
+    return struct.unpack(">8i", frame32)
+
+
+class PiSdDecoder:
     """
-    Decode raw bytes into shape (n_frames, 8) int32.
+    Push raw bytes from pi_sd.
 
-    ``word_endian`` — per-channel 32-bit word byte order in the 32-byte frame:
-    ``"big"`` (default, matches Past Lattice MSB-first serializer) or ``"little"``.
-
-    Raises ValueError if len(raw) is not a multiple of FRAME_BYTES.
+    Alignment protocol:
+      1. Host sets PI_ALN=1, calls alignment_begin(). Incoming data is discarded
+         until ALIGN_MIN_CONSECUTIVE_ZERO_FRAMES full zero superframes are seen.
+      2. Host sets PI_ALN=0, calls alignment_aln_went_low(). No TDM is emitted
+         until exactly one MARKER superframe (32x0xFF) is found and consumed.
+      3. Subsequent32-byte words are unpacked as signed big-endian channels until
+         alignment_begin() / resync() runs again.
     """
-    if len(raw) % FRAME_BYTES != 0:
-        raise ValueError(f"raw length {len(raw)} is not a multiple of {FRAME_BYTES} bytes per frame")
-    if len(raw) == 0:
-        return np.zeros((0, 8), dtype=np.int32)
-    n = len(raw) // FRAME_BYTES
-    dtype = _dtype_word(word_endian)
-    return np.frombuffer(raw, dtype=dtype).reshape(n, 8)
+
+    def __init__(self, max_buffer: int = 1 << 20) -> None:
+        self._lock = threading.Lock()
+        self._buf: bytearray = bytearray()
+        self._max_buffer = max_buffer
+        self._phase = _Phase.FLUSH_IDLE_ZEROS
+        self._consecutive_zero_frames = 0
+        self._flush_satisfied = False
+        self._marker_consumed = False
+
+    def alignment_begin(self) -> None:
+        """Call with PI_ALN=1 (or just before raising ALN). Clears state for flush."""
+        with self._lock:
+            self._buf.clear()
+            self._phase = _Phase.FLUSH_IDLE_ZEROS
+            self._consecutive_zero_frames = 0
+            self._flush_satisfied = False
+            self._marker_consumed = False
+
+    def alignment_aln_went_low(self) -> None:
+        """Call after host sets PI_ALN=0; wait for MARKER before emitting TDM."""
+        with self._lock:
+            self._phase = _Phase.WAIT_MARKER
+            self._marker_consumed = False
+
+    @property
+    def flush_satisfied(self) -> bool:
+        with self._lock:
+            return self._flush_satisfied
+
+    @property
+    def marker_consumed(self) -> bool:
+        with self._lock:
+            return self._marker_consumed
+
+    @property
+    def is_streaming(self) -> bool:
+        with self._lock:
+            return self._phase == _Phase.STREAM
+
+    def resync(self) -> None:
+        """Abort decode; next step should be alignment_begin() + PI_ALN sequence."""
+        self.alignment_begin()
+
+    def push(self, data: bytes) -> List[Tuple[int, ...]]:
+        if not data:
+            return []
+        with self._lock:
+            self._buf.extend(data)
+            if len(self._buf) > self._max_buffer:
+                del self._buf[: len(self._buf) - self._max_buffer]
+
+            if self._phase == _Phase.FLUSH_IDLE_ZEROS:
+                self._consume_flush_phase()
+                return []
+
+            if self._phase == _Phase.WAIT_MARKER:
+                self._consume_wait_marker()
+                if self._phase != _Phase.STREAM:
+                    return []
+
+            out: List[Tuple[int, ...]] = []
+            self._drain_stream_frames(out)
+            return out
+
+    def _consume_flush_phase(self) -> None:
+        """Strip input until we see enough consecutive zero superframes."""
+        b = self._buf
+        need = cfg.ALIGN_MIN_CONSECUTIVE_ZERO_FRAMES
+
+        while len(b) >= cfg.FRAME_BYTES:
+            frame = bytes(b[: cfg.FRAME_BYTES])
+            if frame == cfg.ZERO_FRAME:
+                del b[: cfg.FRAME_BYTES]
+                self._consecutive_zero_frames += 1
+                if self._consecutive_zero_frames >= need:
+                    self._flush_satisfied = True
+                continue
+
+            self._consecutive_zero_frames = 0
+            idx = b.find(cfg.ZERO_FRAME)
+            if idx > 0:
+                del b[:idx]
+                continue
+            if idx < 0:
+                del b[:1]
+                continue
+
+    def _consume_wait_marker(self) -> None:
+        b = self._buf
+        idx = b.find(cfg.MARKER)
+        if idx < 0:
+            if len(b) > len(cfg.MARKER):
+                del b[: len(b) - len(cfg.MARKER) + 1]
+            return
+        del b[: idx + cfg.FRAME_BYTES]
+        self._phase = _Phase.STREAM
+        self._marker_consumed = True
+
+    def _drain_stream_frames(self, out: List[Tuple[int, ...]]) -> None:
+        b = self._buf
+        i = 0
+        n = len(b)
+
+        while i + cfg.FRAME_BYTES <= n:
+            frame = bytes(b[i : i + cfg.FRAME_BYTES])
+            if frame == cfg.MARKER:
+                i += cfg.FRAME_BYTES
+                continue
+            out.append(unpack_superframe(frame))
+            i += cfg.FRAME_BYTES
+
+        if i:
+            del b[:i]
 
 
-def decode_single_frame(raw32: bytes, *, word_endian: str = "big") -> np.ndarray:
-    """Exactly one 256-bit frame → shape (8,) int32."""
-    if len(raw32) != FRAME_BYTES:
-        raise ValueError(f"expected {FRAME_BYTES} bytes, got {len(raw32)}")
-    dtype = _dtype_word(word_endian)
-    return np.frombuffer(raw32, dtype=dtype).copy()
+def iter_file_chunks(path: str, chunk: int = 8192) -> Iterable[bytes]:
+    with open(path, "rb") as f:
+        while True:
+            block = f.read(chunk)
+            if not block:
+                break
+            yield block
