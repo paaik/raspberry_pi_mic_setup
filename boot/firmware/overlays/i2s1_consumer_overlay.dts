@@ -1,0 +1,70 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * simple-audio-card on Pi 5 I2S1 clock consumer (FPGA or other master drives BCLK/LRCK/SDIN).
+ *
+ * Build on the Pi:
+ *   sudo dtc -@ -H epapr -I dts -O dtb -Wno-unit_address_vs_reg \
+ *     -o /boot/firmware/overlays/i2s1_consumer_overlay.dtbo \
+ *        /boot/firmware/overlays/i2s1_consumer_overlay.dts
+ *
+ * config.txt:  dtoverlay=i2s1_consumer_overlay
+ *
+ * Notes:
+ * - fragment@0 enables the DesignWare I2S block (required; it is disabled in base DT).
+ * - bitclock-master / frame-master on the codec node match slave mode (external master).
+ * - Adjust dai-tdm-slot-num / dai-tdm-slot-width for your TDM frame (e.g. 8 slots × 32 bits).
+ */
+
+/ {
+	compatible = "brcm,bcm2712";
+
+	fragment@0 {
+		target = <&i2s_clk_consumer>;
+		__overlay__ {
+			status = "okay";
+		};
+	};
+
+	fragment@1 {
+		target = <&sound>;
+		__overlay__ {
+			compatible = "simple-audio-card";
+			i2s-controller = <&i2s_clk_consumer>;
+			status = "okay";
+
+			simple-audio-card,name = "i2s1_consumer";
+			simple-audio-card,format = "i2s";
+			simple-audio-card,record-only;
+
+			simple-audio-card,bitclock-master = <&snd_codec>;
+			simple-audio-card,frame-master = <&snd_codec>;
+
+			simple-audio-card,cpu {
+				sound-dai = <&i2s_clk_consumer>;
+				/* adjust for TDM */
+				dai-tdm-slot-num = <2>;
+				/* adjust for your frame */
+				dai-tdm-slot-width = <32>;
+			};
+
+			snd_codec: simple-audio-card,codec {
+				sound-dai = <&dummy_codec>;
+				dai-tdm-slot-num = <2>;
+				dai-tdm-slot-width = <32>;
+			};
+		};
+	};
+
+	fragment@2 {
+		target-path = "/";
+		__overlay__ {
+			dummy_codec: dummy-codec {
+				compatible = "linux,spdif-dir";
+				#sound-dai-cells = <0>;
+				status = "okay";
+			};
+		};
+	};
+};

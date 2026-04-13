@@ -1,0 +1,79 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * i2s1-consumer-overlay — Raspberry Pi 5 (BCM2712 / RP1)
+ *
+ * Exposes the Pi5 I2S *clock consumer* block (rp1_i2s1 / &i2s_clk_consumer) as an
+ * ALSA capture card via simple-audio-card. Intended when an FPGA (or other master)
+ * drives BCLK, LRCLK/FS, and SDIN into the Pi; the SoC is I²S slave.
+ *
+ * Wiring (default pinctrl rp1_i2s1_18_21 from bcm2712-rpi.dtsi):
+ *   GPIO18 — BCLK      (input to Pi, driven by master)
+ *   GPIO19 — LRCK / WS (input to Pi)
+ *   GPIO20 — SDI[0]    serial data into the Pi (capture)
+ *   GPIO21 — SDO[0]    (not used for capture-only; pin still muxed for i2s1)
+ *
+ * The codec side uses linux,spdif-dir (stub DAI,1–384 ch) so no physical codec IC
+ * is required. TDM is described with 8 slots × 32 bits; tune dai-tdm-* if your FPGA
+ * uses a different slot count.
+ *
+ * Build and install on Raspberry Pi OS:
+ *   sudo dtc -@ -H epapr -I dts -O dtb -Wno-unit_address_vs_reg \
+ *     -o /boot/firmware/overlays/i2s1-consumer-overlay.dtbo \
+ *        /boot/firmware/overlays/i2s1-consumer-overlay.dts
+ *
+ * /boot/firmware/config.txt:
+ *   dtoverlay=i2s1-consumer-overlay
+ *
+ * Then reboot and check:  arecord -l
+ */
+
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "brcm,bcm2712";
+
+	fragment@0 {
+		target = <&i2s_clk_consumer>;
+		__overlay__ {
+			status = "okay";
+		};
+	};
+
+	fragment@1 {
+		target-path = "/";
+		__overlay__ {
+			fpga_i2s_codec: fpga-i2s-codec {
+				compatible = "linux,spdif-dir";
+				#sound-dai-cells = <0>;
+			};
+		};
+	};
+
+	fragment@2 {
+		target = <&sound>;
+		__overlay__ {
+			compatible = "simple-audio-card";
+			i2s-controller = <&i2s_clk_consumer>;
+			status = "okay";
+
+			simple-audio-card,name = "fpga-i2s1-tdm";
+			simple-audio-card,record-only;
+			simple-audio-card,format = "i2s";
+			simple-audio-card,bitclock-master = <&snd_fpga_codec>;
+			simple-audio-card,frame-master = <&snd_fpga_codec>;
+
+			simple-audio-card,cpu {
+				sound-dai = <&i2s_clk_consumer>;
+				dai-tdm-slot-num = <8>;
+				dai-tdm-slot-width = <32>;
+			};
+
+			snd_fpga_codec: simple-audio-card,codec {
+				sound-dai = <&fpga_i2s_codec>;
+				dai-tdm-slot-num = <8>;
+				dai-tdm-slot-width = <32>;
+			};
+		};
+	};
+};
