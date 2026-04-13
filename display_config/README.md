@@ -76,6 +76,23 @@ python3 show_text.py "Hello from Raspberry Pi"
 python3 show_text.py --lines "Line 1" "Line 2" --size 20 --fg "#00ff88" --bg "#101018"
 ```
 
+## Mic status on the LCD (FPGA TDM)
+
+While **`server.py`** is running (same Pi or another machine on the LAN), **`mic_status_lcd.py`** polls **`/api/meters`** and draws whether the eight mics are **ACTIVE**, **IDLE** (decoder locked but no recent frames), or **NOT LOCKED** (still aligning), plus frame count and peak dBFS.
+
+```bash
+cd /path/to/raspberrypi_micsetup/display_config
+python3 mic_status_lcd.py
+```
+
+Override URL / refresh interval (defaults are in `config.py`: `MIC_STATUS_API_URL`, `MIC_STATUS_REFRESH_S`):
+
+```bash
+python3 mic_status_lcd.py --url http://127.0.0.1:8080/api/meters --interval 1.5
+```
+
+If the dashboard is down, the panel shows **Mics: UNKNOWN**.
+
 ## Tuning `config.py`
 
 | Setting        | If something looks wrong |
@@ -92,6 +109,7 @@ python3 show_text.py --lines "Line 1" "Line 2" --size 20 --fg "#00ff88" --bg "#1
 | `config.py` | Resolution, GPIO BCM numbers, SPI speed, offsets. |
 | `display_driver.py` | Create `ST7789` object (Blinka + `adafruit_rgb_display`). |
 | `show_text.py` | CLI: render multiline text with Pillow and push to the LCD. |
+| `mic_status_lcd.py` | Loop: poll dashboard JSON and show mic ACTIVE / IDLE on the LCD. |
 | `requirements-display.txt` | Pip packages for the display stack. |
 
 ## Official Waveshare examples

@@ -27,3 +27,11 @@ Y_OFFSET = 0
 
 # 0 = portrait (240 wide × 280 tall). Try 90, 180, 270 if text is sideways.
 ROTATION = 0
+
+# --- Mic status on LCD (see mic_status_lcd.py; run alongside server.py) ---
+# Full URL to the dashboard meters JSON.
+MIC_STATUS_API_URL = "http://127.0.0.1:8080/api/meters"
+# How often to refresh the panel (seconds).
+MIC_STATUS_REFRESH_S = 1.0
+# HTTP GET timeout (seconds).
+MIC_STATUS_HTTP_TIMEOUT_S = 3.0

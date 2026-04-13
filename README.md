@@ -184,6 +184,6 @@ Ensure **`pigpiod`** is not started twice; use **`ExecStartPre`** or a **`Requir
 | Path | Role |
 |------|------|
 | `audio/` | Decode, alignment, metering, pigpio capture |
-| `display_config/` | ST7789 LCD (Blinka / CircuitPython-style) |
+| `display_config/` | ST7789 LCD + optional `mic_status_lcd.py` (polls `/api/meters`) |
 | `web/` | Flask templates and static assets for the dashboard |
 | `Past_Lattice 4 Avril copy/` | FPGA Verilog and constraints (source of framing behaviour) |

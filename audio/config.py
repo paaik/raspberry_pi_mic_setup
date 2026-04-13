@@ -68,3 +68,6 @@ ALIGN_MIN_CONSECUTIVE_ZERO_FRAMES = 4
 # Timeouts for blocking alignment in start_capture (seconds).
 ALIGN_FLUSH_TIMEOUT_S = 1.0
 ALIGN_WAIT_MARKER_TIMEOUT_S = 1.0
+
+# If no TDM superframes arrive for this long while decoding, treat mics as inactive.
+MIC_ACTIVE_STALE_AFTER_S = 2.0

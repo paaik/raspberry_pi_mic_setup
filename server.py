@@ -19,6 +19,7 @@ from typing import Any, Dict, Optional
 
 from flask import Flask, jsonify, render_template
 
+from audio import config as audio_cfg
 from audio.aln_sync import run_pi_aln_alignment
 from audio.capture_bsc import PigpioBscSpiCapture
 from audio.capture_mock import MockFileCapture
@@ -40,6 +41,7 @@ _state: Dict[str, Any] = {
     ],
     "frames": 0,
     "last_error": None,
+    "last_frame_at": None,  # time.monotonic() after last decoded superframe batch
 }
 
 _capture: Optional[Any] = None
@@ -67,6 +69,7 @@ def _on_raw_bytes(chunk: bytes) -> None:
                 peaks[i] = a
 
     with _state_lock:
+        _state["last_frame_at"] = time.monotonic()
         _state["frames"] += len(frames)
         for i in range(8):
             _peak_hold[i] = smooth_peak(_peak_hold[i], float(peaks[i]), _smooth_coeff)
@@ -101,13 +104,28 @@ def index() -> str:
     return render_template("index.html")
 
 
+def _mics_active_now() -> bool:
+    """True when TDM is streaming and superframes arrived recently."""
+    if not _decoder.is_streaming:
+        return False
+    with _state_lock:
+        t = _state["last_frame_at"]
+    if t is None:
+        return False
+    return (time.monotonic() - t) < audio_cfg.MIC_ACTIVE_STALE_AFTER_S
+
+
 @app.route("/api/meters")
 def api_meters() -> Any:
+    mics_active = _mics_active_now()
+    decoder_streaming = _decoder.is_streaming
     with _state_lock:
         payload = {
             "channels": [dict(c) for c in _state["channels"]],
             "frames": _state["frames"],
             "last_error": _state["last_error"],
+            "mics_active": mics_active,
+            "decoder_streaming": decoder_streaming,
         }
     return jsonify(payload)
 
